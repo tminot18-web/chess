@@ -38,8 +38,8 @@
         background: #fff;
       }
       .side {
-        width: 320px;
-        flex: 0 0 320px;
+        width: 360px;
+        flex: 0 0 360px;
         display: flex;
         flex-direction: column;
         gap: 14px;
@@ -114,7 +114,7 @@
           min-height: 0;
         }
         .side {
-          width: min(92vw, 420px);
+          width: min(92vw, 460px);
           flex: 0 0 auto;
         }
       }
@@ -127,7 +127,7 @@
 
       <div class="side">
         <div class="eval" id="eval">+0.0</div>
-        <div class="sub" id="status">Connect to play. Truth-only eval. No hints. No undo.</div>
+        <div class="sub" id="status">Truth-only eval. No hints. No undo.</div>
 
         <div class="row">
           <span class="pill">Room <b id="room">—</b></span>
@@ -135,6 +135,15 @@
           <span class="pill">Players <b id="players">0</b></span>
         </div>
 
+        <!-- ✅ Matchmaking -->
+        <div class="row">
+          <button id="playOnline">Play Online</button>
+          <button id="cancelSearch" disabled>Cancel</button>
+        </div>
+
+        <div class="sub">Or use a private room:</div>
+
+        <!-- Private rooms -->
         <div class="row">
           <input id="roomInput" placeholder="ROOM CODE" maxlength="10" />
           <button id="join">Join</button>
@@ -147,7 +156,7 @@
         </div>
 
         <div class="log" id="log"></div>
-        <div class="sub">Tip: share the room link. Both players see the same eval.</div>
+        <div class="sub">Play Online = instant match. Private rooms = share link.</div>
       </div>
     </div>
 
@@ -168,15 +177,17 @@
       const copyBtn = document.getElementById("copy");
       const roomInput = document.getElementById("roomInput");
 
+      const playOnlineBtn = document.getElementById("playOnline");
+      const cancelSearchBtn = document.getElementById("cancelSearch");
+
       let ws = null;
       let currentRoom = null;
       let myRole = "spectator";
 
-      // authoritative fen (from server)
       let currentFen = FEN.start;
-
-      // used to ignore stale evals
       let currentPly = 0;
+
+      let searching = false;
 
       function log(msg) {
         const d = document.createElement("div");
@@ -195,13 +206,9 @@
       }
 
       function plyFromFen(fen) {
-        // fen format: "pieces turn castling ep halfmove fullmove"
         const parts = (fen || "").split(" ");
         const turn = parts[1] || "w";
         const fullmove = parseInt(parts[5] || "1", 10);
-        // ply count (starting position = 0)
-        // After 1.e4 => fullmove=1, turn=b => ply=1
-        // After ...c5 => fullmove=2, turn=w => ply=2
         const base = (fullmove - 1) * 2;
         return base + (turn === "b" ? 1 : 0);
       }
@@ -218,16 +225,32 @@
         return myRole === "white" || myRole === "black";
       }
 
+      function setSearching(v) {
+        searching = v;
+        playOnlineBtn.disabled = v;
+        cancelSearchBtn.disabled = !v;
+        if (v) statusEl.textContent = "Searching for opponent…";
+      }
+
       function setStatus() {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
           statusEl.textContent = "Disconnected. Refresh or re-join.";
           restartBtn.disabled = true;
           copyBtn.disabled = true;
+          playOnlineBtn.disabled = false;
+          cancelSearchBtn.disabled = true;
+          searching = false;
+          return;
+        }
+
+        if (searching) {
+          statusEl.textContent = "Searching for opponent…";
+          restartBtn.disabled = true;
           return;
         }
 
         if (!canInteract()) {
-          statusEl.textContent = "Spectating. Create/Join to get a seat (white/black).";
+          statusEl.textContent = "Spectating / not seated. Click Play Online or join a room.";
           restartBtn.disabled = true;
         } else if (!isMyTurn(currentFen)) {
           statusEl.textContent = "Opponent’s turn.";
@@ -240,15 +263,13 @@
         copyBtn.disabled = !currentRoom;
       }
 
-      // ✅ LOCAL assets
       const board = new Chessboard(boardEl, {
         position: FEN.start,
         responsive: true,
-        assetsUrl: "/cm-assets/"
+        assetsUrl: "/cm-assets/",
       });
 
       function forceSnapback() {
-        // re-apply authoritative fen from server
         board.setPosition(currentFen);
       }
 
@@ -263,6 +284,7 @@
         currentFen = FEN.start;
         currentPly = 0;
         board.setPosition(currentFen);
+        setSearching(false);
         setStatus();
 
         ws.onopen = () => {
@@ -272,6 +294,23 @@
 
         ws.onmessage = (e) => {
           const msg = JSON.parse(e.data);
+
+          if (msg.type === "queued") {
+            setSearching(true);
+            log("queued");
+          }
+
+          if (msg.type === "queueCanceled") {
+            setSearching(false);
+            log("search canceled");
+            setStatus();
+          }
+
+          if (msg.type === "matchFound") {
+            // Server will also send "joined" next, but this gives immediate feedback
+            setSearching(false);
+            log(`match found: room ${msg.room} (${msg.role})`);
+          }
 
           if (msg.type === "joined") {
             currentRoom = msg.room;
@@ -286,10 +325,7 @@
             u.searchParams.set("room", msg.room);
             history.replaceState({}, "", u);
 
-            // enable buttons once in a room
-            restartBtn.disabled = !canInteract();
             copyBtn.disabled = false;
-
             setStatus();
           }
 
@@ -305,11 +341,7 @@
           }
 
           if (msg.type === "eval") {
-            // If server sends stale evals, ignore them.
-            // If server doesn't include ply, we still do a best-effort: accept.
-            // (If you want perfect matching, we’ll add ply on server next.)
             if (typeof msg.ply === "number" && msg.ply !== currentPly) return;
-
             evalEl.textContent = fmt(msg.score);
           }
 
@@ -322,27 +354,26 @@
 
         ws.onclose = () => {
           log("disconnected");
+          setSearching(false);
           setStatus();
         };
 
         ws.onerror = () => {
           log("socket error");
+          setSearching(false);
           setStatus();
         };
       }
 
-      // ✅ Turn-aware + snapback on reject
+      // Turn-aware input + snapback
       board.enableMoveInput((event) => {
-        // Disallow any interaction if you're not seated
         if (!canInteract()) return false;
 
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
-          // Only allow grabbing a piece on your turn
           return isMyTurn(currentFen);
         }
 
         if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
-          // Only allow drop on your turn
           if (!isMyTurn(currentFen)) {
             log("not your turn");
             forceSnapback();
@@ -351,24 +382,22 @@
 
           if (!ws || ws.readyState !== WebSocket.OPEN) return false;
 
-          // Send move to server; server will broadcast new authoritative state
           ws.send(
             JSON.stringify({
               type: "move",
               from: event.squareFrom,
               to: event.squareTo,
-              promotion: "q"
+              promotion: "q",
             })
           );
 
-          // Important: we *don't* apply the move locally; wait for server.
-          // Returning true allows the UX to drop; if server rejects, we snap back.
           return true;
         }
 
         return true;
       });
 
+      // Buttons
       joinBtn.onclick = () => {
         const code = roomInput.value.trim().toUpperCase();
         if (code) connect(code);
@@ -389,7 +418,26 @@
         log("room link copied");
       };
 
-      // Auto-join from URL
+      playOnlineBtn.onclick = () => {
+        // If not connected yet, connect to server by joining "" first then queue
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          connect("");
+          // queue after join handshake (light delay)
+          setTimeout(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "queue" }));
+          }, 250);
+          return;
+        }
+        ws.send(JSON.stringify({ type: "queue" }));
+      };
+
+      cancelSearchBtn.onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "cancelQueue" }));
+        }
+      };
+
+      // Auto-join room from URL if present
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) connect(roomParam.trim().toUpperCase());
       else setStatus();

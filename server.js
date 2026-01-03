@@ -1,15 +1,15 @@
 /**
- * server.js — Live Eval Chess Online (Render-safe + Stockfish path-safe)
+ * server.js — Live Eval Chess Online
  *
- * - Serves /public
+ * Features:
+ * - Serve /public (incl /cm-assets)
  * - WebSocket multiplayer at /ws
+ * - Private rooms (join by code / link)
+ * - Global matchmaking queue: "Find Match" -> auto room + auto seats
  * - Authoritative chess rules (chess.js)
- * - Broadcasts state (fen) + numeric eval ONLY
- * - NEVER crashes if Stockfish missing or dies
- * - Tries common Stockfish paths to avoid ENOENT in Docker runtimes
- *
- * Expected deps:
- *   npm i express ws chess.js
+ * - Broadcast state (fen) + numeric eval ONLY
+ * - Stockfish eval if available; deterministic material fallback
+ * - Never crashes if Stockfish missing/dies
  */
 
 const path = require("path");
@@ -60,7 +60,6 @@ function countPlayers(room) {
 }
 
 function plyFromFen(fen) {
-  // fen: "pieces turn castling ep halfmove fullmove"
   const parts = (fen || "").split(" ");
   const turn = parts[1] || "w";
   const fullmove = parseInt(parts[5] || "1", 10);
@@ -69,7 +68,6 @@ function plyFromFen(fen) {
 }
 
 function materialEvalFromFen(fen) {
-  // Deterministic fallback evaluation (white POV)
   const boardPart = (fen || "").split(" ")[0] || "";
   const val = { p: 1, n: 3, b: 3, r: 5, q: 9 };
   let score = 0;
@@ -78,7 +76,7 @@ function materialEvalFromFen(fen) {
     if (c === "/" || (c >= "1" && c <= "8")) continue;
     const lower = c.toLowerCase();
     if (!val[lower]) continue;
-    score += c === lower ? -val[lower] : val[lower]; // lowercase=black
+    score += c === lower ? -val[lower] : val[lower];
   }
 
   score = Math.max(-9.9, Math.min(9.9, score));
@@ -86,28 +84,26 @@ function materialEvalFromFen(fen) {
 }
 
 // -----------------------------
-// Stockfish wrapper (safe + queued + path-safe)
+// Stockfish (path-safe, queued, safe)
 // -----------------------------
 class StockfishEngine {
   constructor() {
     this.available = false;
     this.ready = false;
-
     this.proc = null;
     this.buffer = "";
     this.queue = [];
     this.busy = false;
-
     this._initTried = false;
     this._binary = null;
   }
 
   _candidateBinaries() {
     return [
-      process.env.STOCKFISH_PATH,     // allow override
-      "/usr/games/stockfish",         // common in Debian/Ubuntu
-      "/usr/bin/stockfish",           // sometimes here
-      "stockfish",                    // PATH
+      process.env.STOCKFISH_PATH,
+      "/usr/games/stockfish",
+      "/usr/bin/stockfish",
+      "stockfish",
     ].filter(Boolean);
   }
 
@@ -128,7 +124,6 @@ class StockfishEngine {
 
     for (const cmd of candidates) {
       try {
-        // If cmd is an absolute path and doesn't exist, skip quickly
         if (cmd.startsWith("/") && !this._fileExists(cmd)) continue;
 
         const sf = spawn(cmd, [], { stdio: ["pipe", "pipe", "pipe"] });
@@ -150,7 +145,6 @@ class StockfishEngine {
         });
 
         sf.stderr.on("data", (d) => {
-          // Never crash on stderr
           console.error(`[stockfish] stderr (${this._binary}):`, d.toString().slice(0, 400));
         });
 
@@ -162,11 +156,9 @@ class StockfishEngine {
         this.available = true;
         console.log(`[stockfish] started: ${this._binary}`);
 
-        // UCI handshake
         this._write("uci");
         this._write("isready");
 
-        // If it never becomes ready, we’ll degrade gracefully.
         setTimeout(() => {
           if (!this.ready) {
             console.error("[stockfish] not ready after timeout; falling back to deterministic eval");
@@ -174,7 +166,7 @@ class StockfishEngine {
           }
         }, 3000);
 
-        return; // success
+        return;
       } catch (e) {
         lastErr = e;
       }
@@ -229,33 +221,25 @@ class StockfishEngine {
     const stm = parts[1] || "w";
 
     let pawns = 0;
-    if (scoreObj.type === "cp") {
-      pawns = scoreObj.value / 100;
-    } else if (scoreObj.type === "mate") {
-      const sign = scoreObj.value >= 0 ? 1 : -1;
-      pawns = sign * 99;
-    } else {
-      return materialEvalFromFen(fen);
-    }
+    if (scoreObj.type === "cp") pawns = scoreObj.value / 100;
+    else if (scoreObj.type === "mate") pawns = (scoreObj.value >= 0 ? 1 : -1) * 99;
+    else return materialEvalFromFen(fen);
 
-    // Convert side-to-move perspective to white POV
+    // convert from side-to-move to white POV
     if (stm === "b") pawns = -pawns;
 
-    // clamp non-mate
     if (Math.abs(pawns) < 90) {
       pawns = Math.max(-9.9, Math.min(9.9, pawns));
       pawns = Math.round(pawns * 10) / 10;
     }
+
     return pawns;
   }
 
   evaluateFenQueued(fen, depth = 12) {
     this.init();
 
-    // Deterministic fallback if stockfish not available
-    if (!this.available || !this.proc) {
-      return Promise.resolve(materialEvalFromFen(fen));
-    }
+    if (!this.available || !this.proc) return Promise.resolve(materialEvalFromFen(fen));
 
     return new Promise((resolve, reject) => {
       const timeoutMs = 1600;
@@ -286,7 +270,6 @@ class StockfishEngine {
           const score = this._scoreToPawnsWhitePOV(job.score, job._fen);
           resolve(score);
 
-          // Pop job and process next
           this.queue.shift();
           this.busy = false;
           this._runNext();
@@ -300,7 +283,6 @@ class StockfishEngine {
         const score = this._scoreToPawnsWhitePOV(job.score, job._fen);
         resolve(score);
 
-        // Pop job and process next
         if (this.queue[0] === job) this.queue.shift();
         this.busy = false;
         this._runNext();
@@ -326,7 +308,6 @@ class StockfishEngine {
     this.busy = true;
     const job = this.queue[0];
 
-    // Fresh analysis: no PV shown to client, only score parsed.
     this._write("ucinewgame");
     this._write("isready");
     this._write(`position fen ${job._fen}`);
@@ -337,9 +318,10 @@ class StockfishEngine {
 const engine = new StockfishEngine();
 
 // -----------------------------
-// Room state
+// Rooms + Matchmaking Queue
 // -----------------------------
-const rooms = new Map(); // code -> { game, clients, seats, lastEval, lastEvalPly }
+const rooms = new Map(); // code -> room
+let waiting = null;      // { ws, ts } single-slot queue (MVP)
 
 function getOrCreateRoom(code) {
   if (!code) code = genRoomCode();
@@ -359,6 +341,22 @@ function getOrCreateRoom(code) {
   return room;
 }
 
+function leaveRoom(ws) {
+  const room = ws._room;
+  if (!room) return;
+
+  room.clients.delete(ws);
+  if (room.seats.white === ws) room.seats.white = null;
+  if (room.seats.black === ws) room.seats.black = null;
+
+  ws._room = null;
+  ws._role = "spectator";
+
+  broadcast(room, { type: "presence", players: countPlayers(room) });
+
+  if (room.clients.size === 0) rooms.delete(room.code);
+}
+
 function assignRole(room, ws) {
   if (!room.seats.white || room.seats.white.readyState !== WebSocket.OPEN) {
     room.seats.white = ws;
@@ -374,8 +372,14 @@ function assignRole(room, ws) {
   return "spectator";
 }
 
+function seatExplicit(room, ws, role) {
+  if (role === "white") room.seats.white = ws;
+  if (role === "black") room.seats.black = ws;
+  ws._role = role;
+}
+
 function canMove(room, ws) {
-  const turn = room.game.turn(); // 'w' or 'b'
+  const turn = room.game.turn();
   if (ws._role === "white" && turn === "w") return true;
   if (ws._role === "black" && turn === "b") return true;
   return false;
@@ -387,7 +391,6 @@ async function updateEvalAndBroadcast(room) {
 
   const score = await engine.evaluateFenQueued(fen, 12).catch(() => materialEvalFromFen(fen));
 
-  // Guard against out-of-order updates
   if (ply < room.lastEvalPly) return;
 
   room.lastEval = typeof score === "number" ? score : 0.0;
@@ -396,13 +399,57 @@ async function updateEvalAndBroadcast(room) {
   broadcast(room, { type: "eval", score: room.lastEval, ply });
 }
 
+function isWsAlive(ws) {
+  return ws && ws.readyState === WebSocket.OPEN;
+}
+
+function clearWaitingIf(ws) {
+  if (waiting && waiting.ws === ws) waiting = null;
+}
+
+function startMatch(wsA, wsB) {
+  // Ensure both are not in rooms
+  leaveRoom(wsA);
+  leaveRoom(wsB);
+
+  const room = getOrCreateRoom("");
+  room.game.reset();
+  room.lastEval = 0.0;
+  room.lastEvalPly = 0;
+
+  // Randomize colors
+  const aWhite = Math.random() < 0.5;
+  const white = aWhite ? wsA : wsB;
+  const black = aWhite ? wsB : wsA;
+
+  // Attach + seat
+  room.clients.add(white);
+  room.clients.add(black);
+  white._room = room;
+  black._room = room;
+
+  seatExplicit(room, white, "white");
+  seatExplicit(room, black, "black");
+
+  // Tell both clients a match was found (so they can update UI instantly)
+  send(white, { type: "matchFound", room: room.code, role: "white" });
+  send(black, { type: "matchFound", room: room.code, role: "black" });
+
+  // Then send normal joined/state/eval/presence
+  send(white, { type: "joined", room: room.code, role: "white" });
+  send(black, { type: "joined", room: room.code, role: "black" });
+
+  broadcast(room, { type: "presence", players: 2 });
+  broadcast(room, { type: "state", fen: room.game.fen() });
+  broadcast(room, { type: "eval", score: room.lastEval, ply: room.lastEvalPly });
+}
+
 // -----------------------------
 // Express + HTTP + WS
 // -----------------------------
 const app = express();
 
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-
 app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
 
 app.get("*", (_req, res) => {
@@ -421,8 +468,60 @@ wss.on("connection", (ws) => {
     const msg = safeJsonParse(raw.toString());
     if (!msg || !msg.type) return;
 
+    // ---- Matchmaking ----
+    if (msg.type === "queue") {
+      // Must be connected but not already playing
+      clearWaitingIf(ws);
+
+      // If you're in a room as a player, don't queue
+      if (ws._room && (ws._role === "white" || ws._role === "black")) {
+        send(ws, { type: "queueError", message: "Leave current game first" });
+        return;
+      }
+
+      // If no one waiting, enqueue
+      if (!waiting || !isWsAlive(waiting.ws)) {
+        waiting = { ws, ts: Date.now() };
+        send(ws, { type: "queued" });
+        return;
+      }
+
+      // If waiting is this same ws, ignore
+      if (waiting.ws === ws) {
+        send(ws, { type: "queued" });
+        return;
+      }
+
+      // Match!
+      const other = waiting.ws;
+      waiting = null;
+
+      if (!isWsAlive(other)) {
+        // race: other died, enqueue this ws
+        waiting = { ws, ts: Date.now() };
+        send(ws, { type: "queued" });
+        return;
+      }
+
+      startMatch(other, ws);
+      return;
+    }
+
+    if (msg.type === "cancelQueue") {
+      clearWaitingIf(ws);
+      send(ws, { type: "queueCanceled" });
+      return;
+    }
+
+    // ---- Private rooms ----
     if (msg.type === "join") {
+      clearWaitingIf(ws);
+
       const requested = (msg.room || "").trim().toUpperCase();
+
+      // If already in a room, leave it (so switching rooms works cleanly)
+      if (ws._room) leaveRoom(ws);
+
       const room = getOrCreateRoom(requested);
 
       ws._room = room;
@@ -431,7 +530,6 @@ wss.on("connection", (ws) => {
       const role = assignRole(room, ws);
 
       send(ws, { type: "joined", room: room.code, role });
-
       broadcast(room, { type: "presence", players: countPlayers(room) });
 
       send(ws, { type: "state", fen: room.game.fen() });
@@ -443,6 +541,7 @@ wss.on("connection", (ws) => {
     const room = ws._room;
     if (!room) return;
 
+    // ---- Moves ----
     if (msg.type === "move") {
       if (!canMove(room, ws)) {
         send(ws, { type: "illegal" });
@@ -468,6 +567,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    // ---- Restart ----
     if (msg.type === "restart") {
       room.game.reset();
       room.lastEval = 0.0;
@@ -475,22 +575,20 @@ wss.on("connection", (ws) => {
 
       broadcast(room, { type: "state", fen: room.game.fen() });
       broadcast(room, { type: "eval", score: room.lastEval, ply: room.lastEvalPly });
+      return;
+    }
 
+    // ---- Leave (optional) ----
+    if (msg.type === "leave") {
+      leaveRoom(ws);
+      send(ws, { type: "left" });
       return;
     }
   });
 
   ws.on("close", () => {
-    const room = ws._room;
-    if (!room) return;
-
-    room.clients.delete(ws);
-    if (room.seats.white === ws) room.seats.white = null;
-    if (room.seats.black === ws) room.seats.black = null;
-
-    broadcast(room, { type: "presence", players: countPlayers(room) });
-
-    if (room.clients.size === 0) rooms.delete(room.code);
+    clearWaitingIf(ws);
+    leaveRoom(ws);
   });
 
   ws.on("error", (err) => {
@@ -498,12 +596,8 @@ wss.on("connection", (ws) => {
   });
 });
 
-process.on("unhandledRejection", (err) => {
-  console.error("[process] unhandledRejection:", err);
-});
-process.on("uncaughtException", (err) => {
-  console.error("[process] uncaughtException:", err);
-});
+process.on("unhandledRejection", (err) => console.error("[process] unhandledRejection:", err));
+process.on("uncaughtException", (err) => console.error("[process] uncaughtException:", err));
 
 server.listen(PORT, () => {
   console.log(`Live Eval Chess online on :${PORT}`);
