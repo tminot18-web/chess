@@ -38,8 +38,8 @@
         background: #fff;
       }
       .side {
-        width: 360px;
-        flex: 0 0 360px;
+        width: 380px;
+        flex: 0 0 380px;
         display: flex;
         flex-direction: column;
         gap: 14px;
@@ -114,7 +114,7 @@
           min-height: 0;
         }
         .side {
-          width: min(92vw, 460px);
+          width: min(92vw, 520px);
           flex: 0 0 auto;
         }
       }
@@ -135,7 +135,6 @@
           <span class="pill">Players <b id="players">0</b></span>
         </div>
 
-        <!-- ✅ Matchmaking -->
         <div class="row">
           <button id="playOnline">Play Online</button>
           <button id="cancelSearch" disabled>Cancel</button>
@@ -143,7 +142,6 @@
 
         <div class="sub">Or use a private room:</div>
 
-        <!-- Private rooms -->
         <div class="row">
           <input id="roomInput" placeholder="ROOM CODE" maxlength="10" />
           <button id="join">Join</button>
@@ -156,7 +154,7 @@
         </div>
 
         <div class="log" id="log"></div>
-        <div class="sub">Play Online = instant match. Private rooms = share link.</div>
+        <div class="sub">Online = matchmaking. Private = share room link.</div>
       </div>
     </div>
 
@@ -188,6 +186,7 @@
       let currentPly = 0;
 
       let searching = false;
+      let mode = "idle"; // idle | online | private
 
       function log(msg) {
         const d = document.createElement("div");
@@ -237,9 +236,7 @@
           statusEl.textContent = "Disconnected. Refresh or re-join.";
           restartBtn.disabled = true;
           copyBtn.disabled = true;
-          playOnlineBtn.disabled = false;
-          cancelSearchBtn.disabled = true;
-          searching = false;
+          setSearching(false);
           return;
         }
 
@@ -250,7 +247,7 @@
         }
 
         if (!canInteract()) {
-          statusEl.textContent = "Spectating / not seated. Click Play Online or join a room.";
+          statusEl.textContent = "Not seated. Click Play Online or join/create a private room.";
           restartBtn.disabled = true;
         } else if (!isMyTurn(currentFen)) {
           statusEl.textContent = "Opponent’s turn.";
@@ -273,43 +270,47 @@
         board.setPosition(currentFen);
       }
 
-      function connect(room) {
-        if (ws) ws.close();
-        ws = new WebSocket(wsUrl());
-
+      function resetLocalState() {
         evalEl.textContent = "+0.0";
-        logEl.textContent = "";
         myRole = "spectator";
         currentRoom = null;
         currentFen = FEN.start;
         currentPly = 0;
+        roomEl.textContent = "—";
+        roleEl.textContent = "—";
+        playersEl.textContent = "0";
         board.setPosition(currentFen);
         setSearching(false);
-        setStatus();
+      }
 
-        ws.onopen = () => {
-          log("connected");
-          ws.send(JSON.stringify({ type: "join", room }));
-        };
-
+      function attachSocketHandlers() {
         ws.onmessage = (e) => {
           const msg = JSON.parse(e.data);
 
           if (msg.type === "queued") {
             setSearching(true);
             log("queued");
+            return;
           }
 
           if (msg.type === "queueCanceled") {
             setSearching(false);
             log("search canceled");
             setStatus();
+            return;
+          }
+
+          if (msg.type === "queueError") {
+            setSearching(false);
+            log(`queue error: ${msg.message || "unknown"}`);
+            statusEl.textContent = msg.message || "Could not queue.";
+            return;
           }
 
           if (msg.type === "matchFound") {
-            // Server will also send "joined" next, but this gives immediate feedback
             setSearching(false);
             log(`match found: room ${msg.room} (${msg.role})`);
+            return;
           }
 
           if (msg.type === "joined") {
@@ -327,10 +328,12 @@
 
             copyBtn.disabled = false;
             setStatus();
+            return;
           }
 
           if (msg.type === "presence") {
             playersEl.textContent = msg.players;
+            return;
           }
 
           if (msg.type === "state") {
@@ -338,31 +341,74 @@
             currentPly = plyFromFen(currentFen);
             board.setPosition(currentFen);
             setStatus();
+            return;
           }
 
           if (msg.type === "eval") {
             if (typeof msg.ply === "number" && msg.ply !== currentPly) return;
             evalEl.textContent = fmt(msg.score);
+            return;
           }
 
           if (msg.type === "illegal") {
             log("illegal / not your turn");
             forceSnapback();
             setStatus();
+            return;
+          }
+
+          if (msg.type === "left") {
+            log("left room");
+            resetLocalState();
+            setStatus();
+            return;
           }
         };
 
         ws.onclose = () => {
           log("disconnected");
-          setSearching(false);
+          resetLocalState();
           setStatus();
         };
 
         ws.onerror = () => {
           log("socket error");
-          setSearching(false);
+          resetLocalState();
           setStatus();
         };
+      }
+
+      function connectForOnlineQueue() {
+        mode = "online";
+        if (ws) ws.close();
+        ws = new WebSocket(wsUrl());
+        logEl.textContent = "";
+        resetLocalState();
+        setSearching(true);
+        log("connecting…");
+
+        ws.onopen = () => {
+          log("connected");
+          ws.send(JSON.stringify({ type: "queue" }));
+        };
+
+        attachSocketHandlers();
+      }
+
+      function connectAndJoin(room) {
+        mode = "private";
+        if (ws) ws.close();
+        ws = new WebSocket(wsUrl());
+        logEl.textContent = "";
+        resetLocalState();
+        log("connecting…");
+
+        ws.onopen = () => {
+          log("connected");
+          ws.send(JSON.stringify({ type: "join", room }));
+        };
+
+        attachSocketHandlers();
       }
 
       // Turn-aware input + snapback
@@ -398,12 +444,33 @@
       });
 
       // Buttons
-      joinBtn.onclick = () => {
-        const code = roomInput.value.trim().toUpperCase();
-        if (code) connect(code);
+      playOnlineBtn.onclick = () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          connectForOnlineQueue();
+          return;
+        }
+
+        // If connected but currently in a private room, re-open cleanly for online
+        if (mode !== "online") {
+          connectForOnlineQueue();
+          return;
+        }
+
+        ws.send(JSON.stringify({ type: "queue" }));
       };
 
-      createBtn.onclick = () => connect("");
+      cancelSearchBtn.onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "cancelQueue" }));
+        }
+      };
+
+      joinBtn.onclick = () => {
+        const code = roomInput.value.trim().toUpperCase();
+        if (code) connectAndJoin(code);
+      };
+
+      createBtn.onclick = () => connectAndJoin("");
 
       restartBtn.onclick = () => {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -418,28 +485,9 @@
         log("room link copied");
       };
 
-      playOnlineBtn.onclick = () => {
-        // If not connected yet, connect to server by joining "" first then queue
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-          connect("");
-          // queue after join handshake (light delay)
-          setTimeout(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "queue" }));
-          }, 250);
-          return;
-        }
-        ws.send(JSON.stringify({ type: "queue" }));
-      };
-
-      cancelSearchBtn.onclick = () => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "cancelQueue" }));
-        }
-      };
-
-      // Auto-join room from URL if present
+      // Auto-join room from URL
       const roomParam = new URL(location.href).searchParams.get("room");
-      if (roomParam) connect(roomParam.trim().toUpperCase());
+      if (roomParam) connectAndJoin(roomParam.trim().toUpperCase());
       else setStatus();
     </script>
   </body>

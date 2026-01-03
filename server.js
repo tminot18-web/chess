@@ -1,15 +1,13 @@
 /**
  * server.js — Live Eval Chess Online
  *
- * Features:
- * - Serve /public (incl /cm-assets)
+ * - Serve /public
  * - WebSocket multiplayer at /ws
- * - Private rooms (join by code / link)
- * - Global matchmaking queue: "Find Match" -> auto room + auto seats
+ * - Private rooms (join/create/share link)
+ * - Global matchmaking queue (Play Online)
  * - Authoritative chess rules (chess.js)
- * - Broadcast state (fen) + numeric eval ONLY
- * - Stockfish eval if available; deterministic material fallback
- * - Never crashes if Stockfish missing/dies
+ * - Broadcast: state (fen) + numeric eval ONLY (no best moves)
+ * - Stockfish eval if available; deterministic fallback
  */
 
 const path = require("path");
@@ -84,7 +82,7 @@ function materialEvalFromFen(fen) {
 }
 
 // -----------------------------
-// Stockfish (path-safe, queued, safe)
+// Stockfish (safe, queued, path-safe)
 // -----------------------------
 class StockfishEngine {
   constructor() {
@@ -225,8 +223,7 @@ class StockfishEngine {
     else if (scoreObj.type === "mate") pawns = (scoreObj.value >= 0 ? 1 : -1) * 99;
     else return materialEvalFromFen(fen);
 
-    // convert from side-to-move to white POV
-    if (stm === "b") pawns = -pawns;
+    if (stm === "b") pawns = -pawns; // convert side-to-move to white POV
 
     if (Math.abs(pawns) < 90) {
       pawns = Math.max(-9.9, Math.min(9.9, pawns));
@@ -238,7 +235,6 @@ class StockfishEngine {
 
   evaluateFenQueued(fen, depth = 12) {
     this.init();
-
     if (!this.available || !this.proc) return Promise.resolve(materialEvalFromFen(fen));
 
     return new Promise((resolve, reject) => {
@@ -318,10 +314,10 @@ class StockfishEngine {
 const engine = new StockfishEngine();
 
 // -----------------------------
-// Rooms + Matchmaking Queue
+// Rooms + Global matchmaking queue
 // -----------------------------
 const rooms = new Map(); // code -> room
-let waiting = null;      // { ws, ts } single-slot queue (MVP)
+let waiting = null;      // single-slot MVP: { ws, ts }
 
 function getOrCreateRoom(code) {
   if (!code) code = genRoomCode();
@@ -390,7 +386,6 @@ async function updateEvalAndBroadcast(room) {
   const ply = plyFromFen(fen);
 
   const score = await engine.evaluateFenQueued(fen, 12).catch(() => materialEvalFromFen(fen));
-
   if (ply < room.lastEvalPly) return;
 
   room.lastEval = typeof score === "number" ? score : 0.0;
@@ -399,7 +394,7 @@ async function updateEvalAndBroadcast(room) {
   broadcast(room, { type: "eval", score: room.lastEval, ply });
 }
 
-function isWsAlive(ws) {
+function isAlive(ws) {
   return ws && ws.readyState === WebSocket.OPEN;
 }
 
@@ -408,7 +403,7 @@ function clearWaitingIf(ws) {
 }
 
 function startMatch(wsA, wsB) {
-  // Ensure both are not in rooms
+  // Ensure neither is in a room
   leaveRoom(wsA);
   leaveRoom(wsB);
 
@@ -422,20 +417,20 @@ function startMatch(wsA, wsB) {
   const white = aWhite ? wsA : wsB;
   const black = aWhite ? wsB : wsA;
 
-  // Attach + seat
   room.clients.add(white);
   room.clients.add(black);
+
   white._room = room;
   black._room = room;
 
   seatExplicit(room, white, "white");
   seatExplicit(room, black, "black");
 
-  // Tell both clients a match was found (so they can update UI instantly)
+  // Immediate UX feedback
   send(white, { type: "matchFound", room: room.code, role: "white" });
   send(black, { type: "matchFound", room: room.code, role: "black" });
 
-  // Then send normal joined/state/eval/presence
+  // Standard room join + initial state
   send(white, { type: "joined", room: room.code, role: "white" });
   send(black, { type: "joined", room: room.code, role: "black" });
 
@@ -457,36 +452,38 @@ app.get("*", (_req, res) => {
 });
 
 const server = http.createServer(app);
-
 const wss = new WebSocket.Server({ server, path: "/ws" });
 
 wss.on("connection", (ws) => {
   ws._room = null;
   ws._role = "spectator";
 
-  ws.on("message", async (raw) => {
+  ws.on("message", (raw) => {
     const msg = safeJsonParse(raw.toString());
     if (!msg || !msg.type) return;
 
-    // ---- Matchmaking ----
+    // -------- Global Matchmaking --------
     if (msg.type === "queue") {
-      // Must be connected but not already playing
-      clearWaitingIf(ws);
-
-      // If you're in a room as a player, don't queue
+      // If you're currently seated in a live game, don't queue.
       if (ws._room && (ws._role === "white" || ws._role === "black")) {
-        send(ws, { type: "queueError", message: "Leave current game first" });
+        send(ws, { type: "queueError", message: "You are already in a game." });
         return;
       }
 
-      // If no one waiting, enqueue
-      if (!waiting || !isWsAlive(waiting.ws)) {
+      // Ensure you're not waiting already
+      clearWaitingIf(ws);
+
+      // Clean up dead waiting slot
+      if (waiting && !isAlive(waiting.ws)) waiting = null;
+
+      // If nobody waiting, enqueue
+      if (!waiting) {
         waiting = { ws, ts: Date.now() };
         send(ws, { type: "queued" });
         return;
       }
 
-      // If waiting is this same ws, ignore
+      // If waiting is the same socket, confirm queued
       if (waiting.ws === ws) {
         send(ws, { type: "queued" });
         return;
@@ -496,8 +493,8 @@ wss.on("connection", (ws) => {
       const other = waiting.ws;
       waiting = null;
 
-      if (!isWsAlive(other)) {
-        // race: other died, enqueue this ws
+      if (!isAlive(other)) {
+        // Race: other died; enqueue this ws
         waiting = { ws, ts: Date.now() };
         send(ws, { type: "queued" });
         return;
@@ -513,13 +510,13 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    // ---- Private rooms ----
+    // -------- Private Rooms --------
     if (msg.type === "join") {
       clearWaitingIf(ws);
 
       const requested = (msg.room || "").trim().toUpperCase();
 
-      // If already in a room, leave it (so switching rooms works cleanly)
+      // Leave any existing room first
       if (ws._room) leaveRoom(ws);
 
       const room = getOrCreateRoom(requested);
@@ -534,25 +531,25 @@ wss.on("connection", (ws) => {
 
       send(ws, { type: "state", fen: room.game.fen() });
       send(ws, { type: "eval", score: room.lastEval, ply: room.lastEvalPly });
-
       return;
     }
 
     const room = ws._room;
     if (!room) return;
 
-    // ---- Moves ----
+    // -------- Moves --------
     if (msg.type === "move") {
       if (!canMove(room, ws)) {
         send(ws, { type: "illegal" });
         return;
       }
 
-      const from = msg.from;
-      const to = msg.to;
-      const promotion = msg.promotion || "q";
+      const move = room.game.move({
+        from: msg.from,
+        to: msg.to,
+        promotion: msg.promotion || "q",
+      });
 
-      const move = room.game.move({ from, to, promotion });
       if (!move) {
         send(ws, { type: "illegal" });
         return;
@@ -567,7 +564,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    // ---- Restart ----
+    // -------- Restart --------
     if (msg.type === "restart") {
       room.game.reset();
       room.lastEval = 0.0;
@@ -578,7 +575,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    // ---- Leave (optional) ----
+    // -------- Leave (optional) --------
     if (msg.type === "leave") {
       leaveRoom(ws);
       send(ws, { type: "left" });
