@@ -11,11 +11,11 @@
     <style>
       :root {
         --bg: #eef1ff;
-        --card: rgba(255,255,255,0.78);
-        --border: rgba(0,0,0,0.12);
+        --card: rgba(255, 255, 255, 0.78);
+        --border: rgba(0, 0, 0, 0.12);
         --text: #111;
-        --muted: rgba(0,0,0,0.6);
-        --shadow: 0 18px 60px rgba(20,10,60,0.12);
+        --muted: rgba(0, 0, 0, 0.6);
+        --shadow: 0 18px 60px rgba(20, 10, 60, 0.12);
       }
 
       body {
@@ -25,8 +25,12 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background:
-          radial-gradient(1000px 700px at 20% 20%, #ffffff 0%, var(--bg) 55%, #e9f7ff 120%);
+        background: radial-gradient(
+          1000px 700px at 20% 20%,
+          #ffffff 0%,
+          var(--bg) 55%,
+          #e9f7ff 120%
+        );
         color: var(--text);
       }
 
@@ -40,15 +44,18 @@
         box-sizing: border-box;
       }
 
+      /* IMPORTANT: cm-chessboard needs a real sized container */
       #board {
         width: 520px;
         height: 520px;
         flex: 0 0 520px;
+        min-width: 520px;
+        min-height: 520px;
         border-radius: 18px;
         overflow: hidden;
         background: #fff;
         box-shadow: var(--shadow);
-        border: 1px solid rgba(0,0,0,0.06);
+        border: 1px solid rgba(0, 0, 0, 0.06);
       }
 
       .side {
@@ -71,6 +78,7 @@
         display: flex;
         justify-content: space-between;
         align-items: baseline;
+        gap: 12px;
       }
 
       .title {
@@ -95,11 +103,13 @@
         font-size: 15px;
         border-radius: 12px;
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.8);
+        background: rgba(255, 255, 255, 0.8);
         cursor: pointer;
         font-weight: 650;
       }
-
+      button:hover {
+        background: rgba(255, 255, 255, 0.95);
+      }
       button:disabled {
         opacity: 0.5;
         cursor: not-allowed;
@@ -112,14 +122,14 @@
         border: 1px solid var(--border);
         width: 150px;
         text-transform: uppercase;
-        background: rgba(255,255,255,0.9);
+        background: rgba(255, 255, 255, 0.9);
       }
 
       .pill {
         padding: 8px 12px;
         border-radius: 999px;
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.6);
+        background: rgba(255, 255, 255, 0.6);
         font-size: 13px;
       }
 
@@ -138,14 +148,13 @@
         border-radius: 999px;
         overflow: hidden;
         border: 1px solid var(--border);
-        background:
-          linear-gradient(
-            90deg,
-            rgba(0,0,0,0.92) 0%,
-            rgba(0,0,0,0.92) 50%,
-            rgba(255,255,255,0.95) 50%,
-            rgba(255,255,255,0.95) 100%
-          );
+        background: linear-gradient(
+          90deg,
+          rgba(0, 0, 0, 0.92) 0%,
+          rgba(0, 0, 0, 0.92) 50%,
+          rgba(255, 255, 255, 0.95) 50%,
+          rgba(255, 255, 255, 0.95) 100%
+        );
       }
 
       .midline {
@@ -168,15 +177,15 @@
 
       .whiteFill {
         left: 50%;
-        background: rgba(255,255,255,0.95);
+        background: rgba(255, 255, 255, 0.95);
       }
 
       .blackFill {
         right: 50%;
-        background: rgba(0,0,0,0.92);
+        background: rgba(0, 0, 0, 0.92);
       }
 
-      /* ---------- Eval number (FIXED) ---------- */
+      /* ---------- Eval number (always readable) ---------- */
 
       .evalNum {
         font-size: 26px;
@@ -185,42 +194,53 @@
         min-width: 78px;
         text-align: right;
 
-        /* Always readable */
-        color: rgba(0,0,0,0.92);
-        background: rgba(255,255,255,0.9);
+        color: rgba(0, 0, 0, 0.92);
+        background: rgba(255, 255, 255, 0.92);
         padding: 6px 10px;
         border-radius: 999px;
         border: 1px solid var(--border);
-        box-shadow: 0 8px 30px rgba(20,10,60,0.12);
+        box-shadow: 0 8px 30px rgba(20, 10, 60, 0.12);
       }
 
       .evalNum.whiteFav {
-        background: rgba(255,255,255,0.95);
+        background: rgba(255, 255, 255, 0.97);
       }
 
       .evalNum.blackFav {
-        background: rgba(0,0,0,0.08);
+        background: rgba(0, 0, 0, 0.08);
       }
 
       .evalNum.neutral {
-        background: rgba(255,255,255,0.9);
+        background: rgba(255, 255, 255, 0.92);
       }
 
       .log {
         height: 200px;
         overflow: auto;
-        font-family: ui-monospace, monospace;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: 12px;
-        background: rgba(255,255,255,0.6);
+        background: rgba(255, 255, 255, 0.6);
         border-radius: 14px;
         padding: 10px;
         border: 1px solid var(--border);
+        white-space: pre-wrap;
       }
 
       @media (max-width: 960px) {
-        .wrap { flex-direction: column; align-items: center; }
-        #board { width: min(92vw,520px); height: min(92vw,520px); }
-        .side { width: min(92vw,560px); }
+        .wrap {
+          flex-direction: column;
+          align-items: center;
+        }
+        #board {
+          width: min(92vw, 520px);
+          height: min(92vw, 520px);
+          flex: 0 0 auto;
+          min-width: 0;
+          min-height: 0;
+        }
+        .side {
+          width: min(92vw, 560px);
+        }
       }
     </style>
   </head>
@@ -236,7 +256,7 @@
             <div class="sub">No hints. No undo.</div>
           </div>
 
-          <div style="height:10px"></div>
+          <div style="height: 10px"></div>
 
           <div class="evalWrap">
             <div class="bar">
@@ -247,7 +267,7 @@
             <div id="evalNum" class="evalNum neutral">+0.0</div>
           </div>
 
-          <div style="height:10px"></div>
+          <div style="height: 10px"></div>
 
           <div class="row">
             <span class="pill">Room <b id="room">—</b></span>
@@ -263,10 +283,10 @@
             <button id="restart" disabled>Restart</button>
           </div>
 
-          <div style="height:10px"></div>
+          <div style="height: 10px"></div>
 
           <div class="row">
-            <input id="roomInput" placeholder="ROOM CODE" />
+            <input id="roomInput" placeholder="ROOM CODE" maxlength="10" />
             <button id="join">Join</button>
             <button id="create">Create</button>
             <button id="copy" disabled>Copy Link</button>
@@ -275,15 +295,332 @@
 
         <div class="card">
           <div id="log" class="log"></div>
-          <div class="sub" style="margin-top:8px">
+          <div class="sub" style="margin-top: 8px">
             Positive = White better · Negative = Black better
           </div>
         </div>
       </div>
     </div>
 
-    <!-- JS logic unchanged from your previous working version -->
-    <!-- Your existing script block stays exactly the same -->
+    <script type="module">
+      import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
+
+      const roomEl = document.getElementById("room");
+      const roleEl = document.getElementById("role");
+      const playersEl = document.getElementById("players");
+      const logEl = document.getElementById("log");
+
+      const joinBtn = document.getElementById("join");
+      const createBtn = document.getElementById("create");
+      const restartBtn = document.getElementById("restart");
+      const copyBtn = document.getElementById("copy");
+      const roomInput = document.getElementById("roomInput");
+
+      const playOnlineBtn = document.getElementById("playOnline");
+      const cancelSearchBtn = document.getElementById("cancelSearch");
+
+      const whiteFill = document.getElementById("whiteFill");
+      const blackFill = document.getElementById("blackFill");
+      const evalNum = document.getElementById("evalNum");
+
+      let ws = null;
+      let currentRoom = null;
+      let myRole = "spectator";
+
+      let currentFen = FEN.start;
+      let currentPly = 0;
+
+      let searching = false;
+      let mode = "idle"; // idle | online | private
+
+      const EVAL_MAX = 10.0;
+
+      function log(msg) {
+        const d = document.createElement("div");
+        d.textContent = msg;
+        logEl.appendChild(d);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function fmt(n) {
+        n = Number(n) || 0;
+        return (n > 0 ? "+" : "") + n.toFixed(1);
+      }
+
+      function wsUrl() {
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        return `${proto}://${location.host}/ws`;
+      }
+
+      function plyFromFen(fen) {
+        const parts = (fen || "").split(" ");
+        const turn = parts[1] || "w";
+        const fullmove = parseInt(parts[5] || "1", 10);
+        const base = (fullmove - 1) * 2;
+        return base + (turn === "b" ? 1 : 0);
+      }
+
+      function isMyTurn(fen) {
+        const parts = (fen || "").split(" ");
+        const turn = parts[1] || "w";
+        if (myRole === "white") return turn === "w";
+        if (myRole === "black") return turn === "b";
+        return false;
+      }
+
+      function canInteract() {
+        return myRole === "white" || myRole === "black";
+      }
+
+      function setSearching(v) {
+        searching = v;
+        playOnlineBtn.disabled = v;
+        cancelSearchBtn.disabled = !v;
+        if (v) log("searching…");
+      }
+
+      const board = new Chessboard(document.getElementById("board"), {
+        position: FEN.start,
+        responsive: true,
+        assetsUrl: "/cm-assets/",
+        orientation: COLOR.white,
+      });
+
+      function setOrientationForRole() {
+        if (myRole === "black") board.setOrientation(COLOR.black);
+        else board.setOrientation(COLOR.white);
+      }
+
+      function renderEvalBar(score) {
+        score = Number(score) || 0;
+
+        const clamped = Math.max(-EVAL_MAX, Math.min(EVAL_MAX, score));
+        const norm = clamped / EVAL_MAX;
+        const fillPct = Math.abs(norm) * 50;
+
+        if (norm > 0) {
+          whiteFill.style.width = `${fillPct}%`;
+          blackFill.style.width = `0%`;
+          evalNum.className = "evalNum whiteFav";
+        } else if (norm < 0) {
+          blackFill.style.width = `${fillPct}%`;
+          whiteFill.style.width = `0%`;
+          evalNum.className = "evalNum blackFav";
+        } else {
+          whiteFill.style.width = `0%`;
+          blackFill.style.width = `0%`;
+          evalNum.className = "evalNum neutral";
+        }
+
+        evalNum.textContent = fmt(score);
+      }
+
+      function resetLocalState() {
+        myRole = "spectator";
+        currentRoom = null;
+        currentFen = FEN.start;
+        currentPly = 0;
+
+        roomEl.textContent = "—";
+        roleEl.textContent = "—";
+        playersEl.textContent = "0";
+
+        board.setPosition(currentFen);
+        setOrientationForRole();
+        renderEvalBar(0);
+
+        setSearching(false);
+        restartBtn.disabled = true;
+        copyBtn.disabled = true;
+      }
+
+      function forceSnapback() {
+        board.setPosition(currentFen);
+      }
+
+      function attachSocketHandlers() {
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+
+          if (msg.type === "queued") return setSearching(true);
+          if (msg.type === "queueCanceled") return setSearching(false);
+          if (msg.type === "queueError") {
+            setSearching(false);
+            log(`queue error: ${msg.message || "unknown"}`);
+            return;
+          }
+
+          if (msg.type === "matchFound") {
+            setSearching(false);
+            log(`match found: room ${msg.room} (${msg.role})`);
+            return;
+          }
+
+          if (msg.type === "joined") {
+            currentRoom = msg.room;
+            myRole = msg.role;
+
+            roomEl.textContent = msg.room;
+            roleEl.textContent = msg.role;
+
+            setOrientationForRole();
+
+            log(`joined ${msg.room} as ${msg.role}`);
+
+            const u = new URL(location.href);
+            u.searchParams.set("room", msg.room);
+            history.replaceState({}, "", u);
+
+            copyBtn.disabled = false;
+            restartBtn.disabled = !canInteract();
+            return;
+          }
+
+          if (msg.type === "presence") {
+            playersEl.textContent = msg.players;
+            return;
+          }
+
+          if (msg.type === "state") {
+            currentFen = msg.fen;
+            currentPly = plyFromFen(currentFen);
+            board.setPosition(currentFen);
+            restartBtn.disabled = !canInteract();
+            return;
+          }
+
+          if (msg.type === "eval") {
+            if (typeof msg.ply === "number" && msg.ply !== currentPly) return;
+            renderEvalBar(msg.score);
+            return;
+          }
+
+          if (msg.type === "illegal") {
+            log("illegal / not your turn");
+            forceSnapback();
+            return;
+          }
+
+          if (msg.type === "left") {
+            log("left room");
+            resetLocalState();
+            return;
+          }
+        };
+
+        ws.onclose = () => {
+          log("disconnected");
+          resetLocalState();
+        };
+
+        ws.onerror = () => {
+          log("socket error");
+          resetLocalState();
+        };
+      }
+
+      function connectForOnlineQueue() {
+        mode = "online";
+        if (ws) ws.close();
+        ws = new WebSocket(wsUrl());
+
+        logEl.textContent = "";
+        resetLocalState();
+
+        setSearching(true);
+        log("connecting…");
+
+        ws.onopen = () => {
+          log("connected");
+          ws.send(JSON.stringify({ type: "queue" }));
+        };
+
+        attachSocketHandlers();
+      }
+
+      function connectAndJoin(room) {
+        mode = "private";
+        if (ws) ws.close();
+        ws = new WebSocket(wsUrl());
+
+        logEl.textContent = "";
+        resetLocalState();
+        log("connecting…");
+
+        ws.onopen = () => {
+          log("connected");
+          ws.send(JSON.stringify({ type: "join", room }));
+        };
+
+        attachSocketHandlers();
+      }
+
+      // Turn-aware input + snapback
+      board.enableMoveInput((event) => {
+        if (!canInteract()) return false;
+
+        if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
+          return isMyTurn(currentFen);
+        }
+
+        if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
+          if (!isMyTurn(currentFen)) {
+            log("not your turn");
+            forceSnapback();
+            return false;
+          }
+
+          if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+
+          ws.send(
+            JSON.stringify({
+              type: "move",
+              from: event.squareFrom,
+              to: event.squareTo,
+              promotion: "q",
+            })
+          );
+
+          return true;
+        }
+
+        return true;
+      });
+
+      // Buttons
+      playOnlineBtn.onclick = () => connectForOnlineQueue();
+
+      cancelSearchBtn.onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "cancelQueue" }));
+        }
+      };
+
+      joinBtn.onclick = () => {
+        const code = roomInput.value.trim().toUpperCase();
+        if (code) connectAndJoin(code);
+      };
+
+      createBtn.onclick = () => connectAndJoin("");
+
+      restartBtn.onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "restart" }));
+        }
+      };
+
+      copyBtn.onclick = async () => {
+        const u = new URL(location.href);
+        if (currentRoom) u.searchParams.set("room", currentRoom);
+        await navigator.clipboard.writeText(u.toString());
+        log("room link copied");
+      };
+
+      // Auto-join via URL
+      const roomParam = new URL(location.href).searchParams.get("room");
+      renderEvalBar(0);
+      if (roomParam) connectAndJoin(roomParam.trim().toUpperCase());
+    </script>
   </body>
 </html>
 
