@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess</title>
 
-    <!-- cm-chessboard styles -->
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/cm-chessboard@8.7.8/assets/styles/cm-chessboard.css"
-    />
+    <!-- ✅ LOCAL cm-chessboard CSS (served from /public/cm-assets/...) -->
+    <link rel="stylesheet" href="/cm-assets/chessboard.css" />
+
+    <!-- Optional: avoid favicon 404 -->
+    <link rel="icon" href="data:," />
 
     <style>
       body {
@@ -32,6 +32,7 @@
         box-sizing: border-box;
       }
 
+      /* Keep board from collapsing */
       #board {
         width: 520px;
         height: 520px;
@@ -40,6 +41,7 @@
         min-height: 520px;
         border-radius: 14px;
         overflow: hidden;
+        background: #fff;
       }
 
       .side {
@@ -74,6 +76,7 @@
         border-radius: 12px;
         border: 1px solid #ddd;
         width: 140px;
+        text-transform: uppercase;
       }
 
       button {
@@ -104,6 +107,7 @@
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: 12px;
         background: #fcfcfc;
+        white-space: pre-wrap;
       }
 
       @media (max-width: 900px) {
@@ -157,6 +161,8 @@
     </div>
 
     <script type="module">
+      // ✅ Import the board logic from unpkg (JS only)
+      // Assets (pieces/styles) are LOCAL via assetsUrl below.
       import { Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
 
       const boardEl = document.getElementById("board");
@@ -185,11 +191,11 @@
         return `${proto}://${location.host}/ws`;
       }
 
-      // ✅ assetsUrl MUST point to real piece SVGs
+      // ✅ THE WHOLE POINT: use LOCAL assets to avoid CDN path hell
       const board = new Chessboard(boardEl, {
         position: FEN.start,
         responsive: true,
-        assetsUrl: "https://unpkg.com/cm-chessboard@8.7.8/assets/"
+        assetsUrl: "/cm-assets/"
       });
 
       function connect(room) {
@@ -228,6 +234,7 @@
         ws.onerror = () => log("socket error");
       }
 
+      // Send moves to server; server is authoritative and will broadcast state/eval.
       board.enableMoveInput((event) => {
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return true;
 
@@ -243,7 +250,7 @@
             })
           );
 
-          // allow drop; server is authoritative and will snap back if illegal
+          // allow drop; server will correct if illegal
           return true;
         }
 
@@ -268,6 +275,7 @@
         log("room link copied");
       };
 
+      // Auto-join room from URL if present
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) connect(roomParam.trim().toUpperCase());
     </script>
