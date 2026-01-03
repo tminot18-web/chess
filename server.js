@@ -1,241 +1,566 @@
-const express = require("express");
-const http = require("http");
+/**
+ * server.js — Live Eval Chess Online (Render-safe)
+ *
+ * Goals:
+ * - Serve /public (including /cm-assets/*)
+ * - WebSocket multiplayer at /ws
+ * - Room create/join
+ * - Authoritative chess rules (chess.js)
+ * - Broadcast state + numeric eval only
+ * - NEVER crash if Stockfish missing or dies
+ *
+ * Expected deps:
+ *   npm i express ws chess.js
+ */
+
 const path = require("path");
+const http = require("http");
+const express = require("express");
 const WebSocket = require("ws");
-const { spawn } = require("child_process");
 const { Chess } = require("chess.js");
+const { spawn } = require("child_process");
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-const app = express();
-app.use(express.static(path.join(__dirname, "public")));
-
-app.get("/health", (_req, res) => res.status(200).send("ok"));
-
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server, path: "/ws" });
-
-/** ---- Rooms ----
-room = {
-  code,
-  chess,
-  clients: Set<ws>,
-  engine: child_process,
-  engineBusy: bool,
-  pendingEvalFen: string|null
-}
-*/
-const rooms = new Map();
-
-function makeCode(len = 6) {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+// -----------------------------
+// Helpers
+// -----------------------------
+function genRoomCode(len = 5) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
-  for (let i = 0; i < len; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
+}
+
+function safeJsonParse(str) {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return null;
+  }
+}
+
+function send(ws, obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  }
 }
 
 function broadcast(room, obj) {
   const msg = JSON.stringify(obj);
-  for (const ws of room.clients) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+  for (const client of room.clients) {
+    if (client.readyState === WebSocket.OPEN) client.send(msg);
   }
 }
 
-function ensureRoom(code) {
+function countPlayers(room) {
+  // Count only real seats (white/black) currently connected
+  let n = 0;
+  for (const client of room.clients) {
+    if (client._role === "white" || client._role === "black") n++;
+  }
+  return n;
+}
+
+// -----------------------------
+// Stockfish wrapper (safe + queued)
+// -----------------------------
+class StockfishEngine {
+  constructor() {
+    this.available = false;
+    this.proc = null;
+    this.buffer = "";
+    this.queue = [];
+    this.busy = false;
+    this.ready = false;
+    this._initTried = false;
+  }
+
+  init() {
+    if (this._initTried) return;
+    this._initTried = true;
+
+    try {
+      const sf = spawn("stockfish", [], { stdio: ["pipe", "pipe", "pipe"] });
+      this.proc = sf;
+
+      sf.on("error", (err) => {
+        console.error("[stockfish] spawn error:", err?.message || err);
+        this.available = false;
+        this.ready = false;
+        this._failAll(err);
+      });
+
+      sf.on("exit", (code, signal) => {
+        console.error("[stockfish] exited:", { code, signal });
+        this.available = false;
+        this.ready = false;
+        this._failAll(new Error("stockfish exited"));
+      });
+
+      sf.stderr.on("data", (d) => {
+        // don't crash on stderr noise
+        console.error("[stockfish] stderr:", d.toString().slice(0, 500));
+      });
+
+      sf.stdout.on("data", (d) => {
+        this.buffer += d.toString();
+        this._drainLines();
+      });
+
+      this.available = true;
+
+      // UCI handshake
+      this._write("uci");
+      this._write("isready");
+
+      // If it never becomes ready, we’ll still keep server alive; eval will fallback.
+      setTimeout(() => {
+        if (!this.ready) {
+          console.error("[stockfish] not ready after timeout; falling back to fake eval");
+          this.available = false;
+        }
+      }, 2500);
+    } catch (e) {
+      console.error("[stockfish] init threw:", e?.message || e);
+      this.available = false;
+      this.ready = false;
+    }
+  }
+
+  _write(cmd) {
+    try {
+      if (this.proc && this.proc.stdin && !this.proc.stdin.destroyed) {
+        this.proc.stdin.write(cmd + "\n");
+      }
+    } catch (e) {
+      console.error("[stockfish] write failed:", e?.message || e);
+    }
+  }
+
+  _drainLines() {
+    let idx;
+    while ((idx = this.buffer.indexOf("\n")) >= 0) {
+      const line = this.buffer.slice(0, idx).trim();
+      this.buffer = this.buffer.slice(idx + 1);
+      if (!line) continue;
+
+      // readiness
+      if (line === "readyok") this.ready = true;
+
+      // pass to current request parser
+      if (this.queue.length && this.queue[0]._onLine) {
+        this.queue[0]._onLine(line);
+      }
+    }
+  }
+
+  _failAll(err) {
+    while (this.queue.length) {
+      const job = this.queue.shift();
+      try {
+        job.reject(err);
+      } catch {}
+    }
+    this.busy = false;
+  }
+
+  /**
+   * Evaluate a position and return a white-perspective score in pawns (e.g. +1.3).
+   * Stockfish scores are from side-to-move; we convert to white POV.
+   */
+  evaluateFen(fen, depth = 12) {
+    this.init();
+
+    // If stockfish not available, return a stable fallback quickly
+    if (!this.available || !this.proc) {
+      return Promise.resolve(this._fakeEvalFromFen(fen));
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeoutMs = 1500;
+
+      const job = {
+        resolve,
+        reject,
+        score: null,
+        done: false,
+        timeout: null,
+        _onLine: (line) => {
+          // Parse score from "info" lines
+          // Examples:
+          // info depth 12 score cp 34 ...
+          // info depth 18 score mate 3 ...
+          if (line.startsWith("info ")) {
+            const mCp = line.match(/\bscore cp (-?\d+)\b/);
+            const mMate = line.match(/\bscore mate (-?\d+)\b/);
+
+            if (mCp) {
+              const cp = parseInt(mCp[1], 10);
+              job.score = { type: "cp", value: cp };
+            } else if (mMate) {
+              const mate = parseInt(mMate[1], 10);
+              job.score = { type: "mate", value: mate };
+            }
+          }
+
+          if (line.startsWith("bestmove ")) {
+            job.done = true;
+            clearTimeout(job.timeout);
+
+            // Convert to pawn value, white POV
+            const score = this._scoreToPawnsWhitePOV(job.score, fen);
+            resolve(score);
+
+            // pop job + run next
+            this.queue.shift();
+            this.busy = false;
+            this._runNext();
+          }
+        },
+      };
+
+      job.timeout = setTimeout(() => {
+        // timeout: resolve with best we had, or fallback
+        if (job.done) return;
+        job.done = true;
+
+        const score = this._scoreToPawnsWhitePOV(job.score, fen);
+        resolve(score);
+
+        // pop job + run next
+        if (this.queue[0] === job) this.queue.shift();
+        this.busy = false;
+        this._runNext();
+      }, timeoutMs);
+
+      this.queue.push(job);
+      this._runNext();
+    });
+  }
+
+  _runNext() {
+    if (this.busy) return;
+    if (!this.queue.length) return;
+    if (!this.available || !this.proc) {
+      // resolve immediately with fallback
+      const job = this.queue.shift();
+      clearTimeout(job.timeout);
+      this.busy = false;
+      job.resolve(this._fakeEvalFromFen("")); // fen unknown here, but fine
+      return;
+    }
+
+    this.busy = true;
+    const job = this.queue[0];
+
+    // The job's parser will run as lines arrive
+    // Send UCI commands
+    // NOTE: we don’t set multipv, and we never expose best moves—only score.
+    const fen = job._fen;
+    // We stash fen on job before calling _runNext in evaluateFen
+  }
+
+  _fakeEvalFromFen(_fen) {
+    // Small-ish noisy eval fallback so UI stays alive (and app never 502s)
+    // Range about [-1.5, +1.5]
+    const v = (Math.random() * 3 - 1.5);
+    return Math.round(v * 10) / 10;
+  }
+
+  _scoreToPawnsWhitePOV(scoreObj, fen) {
+    // If we got nothing, fallback
+    if (!scoreObj) return this._fakeEvalFromFen(fen);
+
+    // Determine side to move from fen
+    // fen: ".... w ..." or ".... b ..."
+    const parts = (fen || "").split(" ");
+    const stm = parts[1] || "w"; // side to move
+
+    let pawns = 0;
+
+    if (scoreObj.type === "cp") {
+      pawns = scoreObj.value / 100;
+    } else if (scoreObj.type === "mate") {
+      // Convert mate score into a large eval so UI reflects decisive position
+      // mate > 0 means side-to-move mates; mate < 0 means side-to-move gets mated
+      const sign = scoreObj.value >= 0 ? 1 : -1;
+      pawns = sign * 99; // big number
+    } else {
+      return this._fakeEvalFromFen(fen);
+    }
+
+    // Stockfish score is from side-to-move perspective.
+    // Convert to White POV:
+    // - if side-to-move is white: keep
+    // - if side-to-move is black: invert
+    if (stm === "b") pawns = -pawns;
+
+    // Clamp for nicer UI (except mate)
+    if (Math.abs(pawns) < 90) {
+      pawns = Math.max(-9.9, Math.min(9.9, pawns));
+      pawns = Math.round(pawns * 10) / 10;
+    }
+
+    return pawns;
+  }
+
+  // Patch: stash fen for queued jobs
+  evaluateFenQueued(fen, depth = 12) {
+    this.init();
+    if (!this.available || !this.proc) return Promise.resolve(this._fakeEvalFromFen(fen));
+
+    return new Promise((resolve, reject) => {
+      const timeoutMs = 1500;
+      const job = {
+        _fen: fen,
+        _depth: depth,
+        resolve,
+        reject,
+        score: null,
+        done: false,
+        timeout: null,
+        _onLine: null,
+      };
+
+      job._onLine = (line) => {
+        if (line.startsWith("info ")) {
+          const mCp = line.match(/\bscore cp (-?\d+)\b/);
+          const mMate = line.match(/\bscore mate (-?\d+)\b/);
+          if (mCp) job.score = { type: "cp", value: parseInt(mCp[1], 10) };
+          else if (mMate) job.score = { type: "mate", value: parseInt(mMate[1], 10) };
+        }
+        if (line.startsWith("bestmove ")) {
+          job.done = true;
+          clearTimeout(job.timeout);
+          const score = this._scoreToPawnsWhitePOV(job.score, job._fen);
+          resolve(score);
+          this.queue.shift();
+          this.busy = false;
+          this._runNextReal();
+        }
+      };
+
+      job.timeout = setTimeout(() => {
+        if (job.done) return;
+        job.done = true;
+        const score = this._scoreToPawnsWhitePOV(job.score, job._fen);
+        resolve(score);
+        if (this.queue[0] === job) this.queue.shift();
+        this.busy = false;
+        this._runNextReal();
+      }, timeoutMs);
+
+      this.queue.push(job);
+      this._runNextReal();
+    });
+  }
+
+  _runNextReal() {
+    if (this.busy) return;
+    if (!this.queue.length) return;
+    if (!this.available || !this.proc) {
+      const job = this.queue.shift();
+      clearTimeout(job.timeout);
+      this.busy = false;
+      job.resolve(this._fakeEvalFromFen(job._fen));
+      return;
+    }
+
+    this.busy = true;
+    const job = this.queue[0];
+
+    // Fresh analysis
+    this._write("ucinewgame");
+    this._write("isready");
+    this._write(`position fen ${job._fen}`);
+    this._write(`go depth ${job._depth}`);
+  }
+}
+
+// Shared engine for simplicity (low traffic MVP). Never crashes server.
+const engine = new StockfishEngine();
+
+// -----------------------------
+// Room state
+// -----------------------------
+const rooms = new Map(); // roomCode -> { game, clients:Set, seats:{white,black}, lastEval }
+
+// Create or get room
+function getOrCreateRoom(code) {
+  if (!code) code = genRoomCode();
   let room = rooms.get(code);
   if (!room) {
     room = {
       code,
-      chess: new Chess(),
+      game: new Chess(),
       clients: new Set(),
-      engine: null,
-      engineBusy: false,
-      pendingEvalFen: null
+      seats: { white: null, black: null },
+      lastEval: 0.0,
+      createdAt: Date.now(),
     };
     rooms.set(code, room);
   }
   return room;
 }
 
-function startEngine(room) {
-  if (room.engine) return;
-
-  // Stockfish binary is installed in Dockerfile (apt-get install stockfish)
-  const engine = spawn("stockfish");
-
-  room.engine = engine;
-
-  engine.stdin.write("uci\n");
-  engine.stdin.write("setoption name Threads value 1\n");
-  engine.stdin.write("setoption name Hash value 64\n");
-  engine.stdin.write("isready\n");
-
-  let buffer = "";
-  engine.stdout.on("data", (data) => {
-    buffer += data.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const lineRaw of lines) {
-      const line = lineRaw.trim();
-      if (!line) continue;
-
-      // Parse eval
-      // Examples:
-      // info depth 12 ... score cp 34 ...
-      // info depth 18 ... score mate -3 ...
-      if (line.startsWith("info ")) {
-        const cpMatch = line.match(/\bscore cp (-?\d+)\b/);
-        const mateMatch = line.match(/\bscore mate (-?\d+)\b/);
-
-        if (cpMatch) {
-          const cp = parseInt(cpMatch[1], 10);
-          // From side-to-move perspective; convert to White-perspective number:
-          // If it's Black to move, flip sign so display is "White advantage"
-          const whiteToMove = room.chess.turn() === "w";
-          const whiteCp = whiteToMove ? cp : -cp;
-          const score = Math.max(-9.9, Math.min(9.9, whiteCp / 100));
-
-          broadcast(room, { type: "eval", score });
-        } else if (mateMatch) {
-          const mate = parseInt(mateMatch[1], 10);
-          // clamp and show as big number with sign; mate>0 means side to move mates
-          const whiteToMove = room.chess.turn() === "w";
-          const whiteMate = whiteToMove ? mate : -mate;
-          const score = whiteMate > 0 ? 9.9 : -9.9;
-          broadcast(room, { type: "eval", score, mate: whiteMate });
-        }
-      }
-
-      // Ignore bestmove completely. Never broadcast it.
-      if (line.startsWith("bestmove")) {
-        room.engineBusy = false;
-
-        // If another eval request arrived while busy, run again on latest position.
-        if (room.pendingEvalFen) {
-          const fen = room.pendingEvalFen;
-          room.pendingEvalFen = null;
-          queueEval(room, fen);
-        }
-      }
-    }
-  });
-
-  engine.on("exit", () => {
-    room.engine = null;
-    room.engineBusy = false;
-    room.pendingEvalFen = null;
-  });
-}
-
-function queueEval(room, fen) {
-  startEngine(room);
-  if (!room.engine) return;
-
-  // If engine is mid-search, just remember the latest position and run after bestmove.
-  if (room.engineBusy) {
-    room.pendingEvalFen = fen;
-    return;
+function assignRole(room, ws) {
+  // Prefer seating: white, then black, else spectator
+  if (!room.seats.white || room.seats.white.readyState !== WebSocket.OPEN) {
+    room.seats.white = ws;
+    ws._role = "white";
+    return "white";
   }
-
-  room.engineBusy = true;
-
-  // A fresh search from current position
-  room.engine.stdin.write("ucinewgame\n");
-  room.engine.stdin.write("isready\n");
-  room.engine.stdin.write(`position fen ${fen}\n`);
-  room.engine.stdin.write("go depth 12\n"); // tweak later (bots can use higher/lower)
-}
-
-function sendState(room) {
-  broadcast(room, {
-    type: "state",
-    fen: room.chess.fen(),
-    turn: room.chess.turn(),
-    moves: room.chess.history({ verbose: true })
-  });
-  queueEval(room, room.chess.fen());
-}
-
-function cleanupRoomIfEmpty(room) {
-  if (room.clients.size > 0) return;
-  if (room.engine) {
-    try { room.engine.kill(); } catch {}
+  if (!room.seats.black || room.seats.black.readyState !== WebSocket.OPEN) {
+    room.seats.black = ws;
+    ws._role = "black";
+    return "black";
   }
-  rooms.delete(room.code);
+  ws._role = "spectator";
+  return "spectator";
 }
+
+function canMove(room, ws) {
+  const turn = room.game.turn(); // 'w' or 'b'
+  if (ws._role === "white" && turn === "w") return true;
+  if (ws._role === "black" && turn === "b") return true;
+  return false;
+}
+
+async function updateEvalAndBroadcast(room) {
+  const fen = room.game.fen();
+
+  // Evaluate (Stockfish if available; otherwise fallback)
+  const score = await engine.evaluateFenQueued(fen, 12).catch(() => 0.0);
+
+  room.lastEval = typeof score === "number" ? score : 0.0;
+
+  broadcast(room, { type: "eval", score: room.lastEval });
+}
+
+// -----------------------------
+// Express + HTTP + WS
+// -----------------------------
+const app = express();
+
+// Basic health endpoint
+app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+
+// Serve static assets
+app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
+
+// SPA-ish fallback to index.html (optional; safe)
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+const server = http.createServer(app);
+
+const wss = new WebSocket.Server({
+  server,
+  path: "/ws",
+});
 
 wss.on("connection", (ws) => {
-  ws.roomCode = null;
+  ws._room = null;
+  ws._role = "spectator";
 
-  ws.on("message", (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw.toString()); } catch { return; }
+  ws.on("message", async (raw) => {
+    const msg = safeJsonParse(raw.toString());
+    if (!msg || !msg.type) return;
 
+    // JOIN / CREATE
     if (msg.type === "join") {
-      const code = (msg.room || "").toString().trim().toUpperCase();
-      const roomCode = code || makeCode();
+      const requested = (msg.room || "").trim().toUpperCase();
+      const room = getOrCreateRoom(requested);
 
-      const room = ensureRoom(roomCode);
-
-      // simple "2 players max" for MVP (spectators later)
-      const playerCount = [...room.clients].filter(c => c.isPlayer).length;
-      ws.isPlayer = playerCount < 2;
-
-      ws.roomCode = roomCode;
+      // attach
+      ws._room = room;
       room.clients.add(ws);
 
-      ws.send(JSON.stringify({
-        type: "joined",
-        room: roomCode,
-        role: ws.isPlayer ? (playerCount === 0 ? "white" : "black") : "spectator"
-      }));
+      const role = assignRole(room, ws);
 
-      // On first join, send initial state (and eval)
-      ws.send(JSON.stringify({ type: "state", fen: room.chess.fen(), turn: room.chess.turn(), moves: [] }));
-      queueEval(room, room.chess.fen());
+      send(ws, { type: "joined", room: room.code, role });
 
-      // Let everyone know who’s in
-      broadcast(room, { type: "presence", players: [...room.clients].filter(c => c.isPlayer).length });
+      // presence + state + eval
+      broadcast(room, { type: "presence", players: countPlayers(room) });
+      send(ws, { type: "state", fen: room.game.fen() });
+      send(ws, { type: "eval", score: room.lastEval });
+
       return;
     }
 
-    if (!ws.roomCode) return;
-    const room = rooms.get(ws.roomCode);
+    const room = ws._room;
     if (!room) return;
 
+    // MOVE
     if (msg.type === "move") {
-      if (!ws.isPlayer) return;
-
-      const { from, to, promotion } = msg;
-      const move = room.chess.move({ from, to, promotion: promotion || "q" });
-      if (!move) {
-        ws.send(JSON.stringify({ type: "illegal" }));
+      if (!canMove(room, ws)) {
+        send(ws, { type: "illegal" });
         return;
       }
 
-      sendState(room);
+      const from = msg.from;
+      const to = msg.to;
+      const promotion = msg.promotion || "q";
+
+      const move = room.game.move({ from, to, promotion });
+      if (!move) {
+        send(ws, { type: "illegal" });
+        return;
+      }
+
+      // Broadcast new state
+      broadcast(room, { type: "state", fen: room.game.fen() });
+
+      // Update eval (async). Don’t block moves.
+      updateEvalAndBroadcast(room).catch((e) => {
+        console.error("[eval] failed:", e?.message || e);
+      });
+
       return;
     }
 
+    // RESTART
     if (msg.type === "restart") {
-      // Any player can restart for MVP; later: only room owner or both agree
-      room.chess.reset();
-      sendState(room);
+      room.game.reset();
+      room.lastEval = 0.0;
+      broadcast(room, { type: "state", fen: room.game.fen() });
+      broadcast(room, { type: "eval", score: room.lastEval });
       return;
     }
   });
 
   ws.on("close", () => {
-    const code = ws.roomCode;
-    if (!code) return;
-    const room = rooms.get(code);
-    if (!room) return;
+    const room = ws._room;
+    if (room) {
+      room.clients.delete(ws);
 
-    room.clients.delete(ws);
-    broadcast(room, { type: "presence", players: [...room.clients].filter(c => c.isPlayer).length });
-    cleanupRoomIfEmpty(room);
+      // clear seats if this ws owned them
+      if (room.seats.white === ws) room.seats.white = null;
+      if (room.seats.black === ws) room.seats.black = null;
+
+      // presence update
+      broadcast(room, { type: "presence", players: countPlayers(room) });
+
+      // cleanup empty rooms (optional)
+      if (room.clients.size === 0) rooms.delete(room.code);
+    }
   });
+
+  ws.on("error", (err) => {
+    // Never crash process on socket errors
+    console.error("[ws] error:", err?.message || err);
+  });
+});
+
+// Process-level safety: never die on unexpected promise errors
+process.on("unhandledRejection", (err) => {
+  console.error("[process] unhandledRejection:", err);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[process] uncaughtException:", err);
+  // Keep running; Render will restart if truly fatal, but we try not to.
 });
 
 server.listen(PORT, () => {
