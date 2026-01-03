@@ -20,7 +20,6 @@
         justify-content: center;
         background: #fff;
       }
-
       .wrap {
         display: flex;
         gap: 28px;
@@ -30,7 +29,6 @@
         width: min(1100px, 100%);
         box-sizing: border-box;
       }
-
       #board {
         width: 520px;
         height: 520px;
@@ -40,7 +38,6 @@
         border-radius: 14px;
         overflow: hidden;
       }
-
       .side {
         width: 320px;
         flex: 0 0 320px;
@@ -48,25 +45,21 @@
         flex-direction: column;
         gap: 14px;
       }
-
       .eval {
         font-size: 56px;
         font-weight: 950;
         line-height: 1;
       }
-
       .sub {
         color: #666;
         font-size: 14px;
       }
-
       .row {
         display: flex;
         gap: 10px;
         align-items: center;
         flex-wrap: wrap;
       }
-
       input {
         padding: 10px 12px;
         font-size: 14px;
@@ -74,7 +67,6 @@
         border: 1px solid #ddd;
         width: 140px;
       }
-
       button {
         padding: 12px 14px;
         font-size: 16px;
@@ -83,7 +75,6 @@
         background: #fafafa;
         cursor: pointer;
       }
-
       .pill {
         display: inline-flex;
         align-items: center;
@@ -93,7 +84,6 @@
         padding: 8px 12px;
         font-size: 14px;
       }
-
       .log {
         border: 1px solid #eee;
         border-radius: 14px;
@@ -104,7 +94,6 @@
         font-size: 12px;
         background: #fcfcfc;
       }
-
       @media (max-width: 900px) {
         .wrap {
           flex-direction: column;
@@ -155,18 +144,15 @@
       </div>
     </div>
 
-    <script type="module">
-      import { Chessboard, FEN, INPUT_EVENT_TYPE } from "https://cdn.jsdelivr.net/npm/cm-chessboard@8.3.8/src/Chessboard.js";
+    <!-- ✅ Use the UMD build that exposes a global -->
+    <script src="https://cdn.jsdelivr.net/npm/cm-chessboard@8.3.8/dist/cm-chessboard.min.js"></script>
 
-      const boardEl = document.getElementById("board");
+    <script>
       const evalEl = document.getElementById("eval");
       const roomEl = document.getElementById("room");
       const roleEl = document.getElementById("role");
       const playersEl = document.getElementById("players");
       const logEl = document.getElementById("log");
-
-      let ws = null;
-      let currentRoom = null;
 
       function log(msg) {
         const d = document.createElement("div");
@@ -184,12 +170,14 @@
         return `${proto}://${location.host}/ws`;
       }
 
-      // ✅ KEY FIX: point assetsUrl to the CDN folder that contains piece SVGs/fonts/etc.
-      const board = new Chessboard(boardEl, {
-        position: FEN.start,
-        responsive: true,
-        assetsUrl: "https://cdn.jsdelivr.net/npm/cm-chessboard@8.3.8/assets/"
+      // ✅ Create board (global CmChessboard)
+      const board = new CmChessboard(document.getElementById("board"), {
+        position: "start",
+        interaction: { enabled: true }
       });
+
+      let ws = null;
+      let currentRoom = null;
 
       function connect(room) {
         if (ws) ws.close();
@@ -217,21 +205,10 @@
             history.replaceState({}, "", u);
           }
 
-          if (msg.type === "presence") {
-            playersEl.textContent = msg.players;
-          }
-
-          if (msg.type === "state") {
-            board.setPosition(msg.fen);
-          }
-
-          if (msg.type === "eval") {
-            evalEl.textContent = fmt(msg.score);
-          }
-
-          if (msg.type === "illegal") {
-            log("illegal move");
-          }
+          if (msg.type === "presence") playersEl.textContent = msg.players;
+          if (msg.type === "state") board.setPosition(msg.fen);
+          if (msg.type === "eval") evalEl.textContent = fmt(msg.score);
+          if (msg.type === "illegal") log("illegal move");
         };
 
         ws.onclose = () => log("disconnected");
@@ -239,25 +216,17 @@
       }
 
       board.enableMoveInput((event) => {
-        if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
-          return true;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          event.cancel();
+          return;
         }
-
-        if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-
-          ws.send(
-            JSON.stringify({
-              type: "move",
-              from: event.squareFrom,
-              to: event.squareTo,
-              promotion: "q"
-            })
-          );
-          return true;
-        }
-
-        return true;
+        ws.send(JSON.stringify({
+          type: "move",
+          from: event.from,
+          to: event.to,
+          promotion: "q"
+        }));
+        event.accept(); // server will snap state back if illegal
       });
 
       document.getElementById("join").onclick = () => {
