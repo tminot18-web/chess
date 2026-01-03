@@ -7,7 +7,7 @@
 
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/styles/cm-chessboard.css"
+      href="https://cdn.jsdelivr.net/npm/cm-chessboard@8.3.8/assets/styles/cm-chessboard.css"
     />
 
     <style>
@@ -156,11 +156,7 @@
     </div>
 
     <script type="module">
-      import {
-        Chessboard,
-        FEN,
-        INPUT_EVENT_TYPE
-      } from "https://cdn.jsdelivr.net/npm/cm-chessboard@8/src/Chessboard.js";
+      import { Chessboard, FEN, INPUT_EVENT_TYPE } from "https://cdn.jsdelivr.net/npm/cm-chessboard@8.3.8/src/Chessboard.js";
 
       const boardEl = document.getElementById("board");
       const evalEl = document.getElementById("eval");
@@ -188,10 +184,11 @@
         return `${proto}://${location.host}/ws`;
       }
 
+      // ✅ KEY FIX: point assetsUrl to the CDN folder that contains piece SVGs/fonts/etc.
       const board = new Chessboard(boardEl, {
         position: FEN.start,
-        assetsUrl: "https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/",
-        responsive: true
+        responsive: true,
+        assetsUrl: "https://cdn.jsdelivr.net/npm/cm-chessboard@8.3.8/assets/"
       });
 
       function connect(room) {
@@ -241,29 +238,22 @@
         ws.onerror = () => log("socket error");
       }
 
-      // Enable input: allow drag/drop and ship moves to server
       board.enableMoveInput((event) => {
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
-          // allow picking up a piece
           return true;
         }
 
         if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
           if (!ws || ws.readyState !== WebSocket.OPEN) return false;
 
-          const from = event.squareFrom;
-          const to = event.squareTo;
-
           ws.send(
             JSON.stringify({
               type: "move",
-              from,
-              to,
+              from: event.squareFrom,
+              to: event.squareTo,
               promotion: "q"
             })
           );
-
-          // allow drop; server will correct via authoritative "state"
           return true;
         }
 
@@ -288,7 +278,6 @@
         log("room link copied");
       };
 
-      // Auto-join if URL has ?room=XXXX
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) connect(roomParam.trim().toUpperCase());
     </script>
