@@ -7,7 +7,7 @@
 
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/cm-chessboard@8.3.8/assets/styles/cm-chessboard.css"
+      href="https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/styles/cm-chessboard.css"
     />
 
     <style>
@@ -20,37 +20,53 @@
         justify-content: center;
         background: #fff;
       }
+
       .wrap {
         display: flex;
         gap: 28px;
         align-items: flex-start;
+        justify-content: center;
         padding: 20px;
+        width: min(1100px, 100%);
+        box-sizing: border-box;
       }
+
       #board {
         width: 520px;
         height: 520px;
+        flex: 0 0 520px;
+        min-width: 520px;
+        min-height: 520px;
+        border-radius: 14px;
+        overflow: hidden;
       }
+
       .side {
         width: 320px;
+        flex: 0 0 320px;
         display: flex;
         flex-direction: column;
         gap: 14px;
       }
+
       .eval {
         font-size: 56px;
         font-weight: 950;
         line-height: 1;
       }
+
       .sub {
         color: #666;
         font-size: 14px;
       }
+
       .row {
         display: flex;
         gap: 10px;
         align-items: center;
         flex-wrap: wrap;
       }
+
       input {
         padding: 10px 12px;
         font-size: 14px;
@@ -58,6 +74,7 @@
         border: 1px solid #ddd;
         width: 140px;
       }
+
       button {
         padding: 12px 14px;
         font-size: 16px;
@@ -66,6 +83,7 @@
         background: #fafafa;
         cursor: pointer;
       }
+
       .pill {
         display: inline-flex;
         align-items: center;
@@ -75,6 +93,7 @@
         padding: 8px 12px;
         font-size: 14px;
       }
+
       .log {
         border: 1px solid #eee;
         border-radius: 14px;
@@ -85,6 +104,24 @@
         font-size: 12px;
         background: #fcfcfc;
       }
+
+      @media (max-width: 900px) {
+        .wrap {
+          flex-direction: column;
+          align-items: center;
+        }
+        #board {
+          width: min(92vw, 520px);
+          height: min(92vw, 520px);
+          flex: 0 0 auto;
+          min-width: 0;
+          min-height: 0;
+        }
+        .side {
+          width: min(92vw, 420px);
+          flex: 0 0 auto;
+        }
+      }
     </style>
   </head>
 
@@ -94,10 +131,7 @@
 
       <div class="side">
         <div class="eval" id="eval">…</div>
-        <div class="sub">
-          Play chess with the truth on the screen.<br />
-          No hints. No undo. Shared eval.
-        </div>
+        <div class="sub">Truth-only eval. No hints. No undo. Multiplayer rooms.</div>
 
         <div class="row">
           <span class="pill">Room <b id="room">—</b></span>
@@ -113,22 +147,22 @@
 
         <div class="row">
           <button id="restart">Restart</button>
-          <button id="copy">Copy Link</button>
+          <button id="copy">Copy Room Link</button>
         </div>
 
         <div class="log" id="log"></div>
-        <div class="sub">Both players always see the same eval.</div>
+        <div class="sub">Tip: share the room link. Both players see the same eval.</div>
       </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/cm-chessboard@8.3.8/dist/cm-chessboard.min.js"></script>
+    <script type="module">
+      import {
+        Chessboard,
+        FEN,
+        INPUT_EVENT_TYPE
+      } from "https://cdn.jsdelivr.net/npm/cm-chessboard@8/src/Chessboard.js";
 
-    <script>
-      const board = new CmChessboard(document.getElementById("board"), {
-        position: "start",
-        interaction: { enabled: true }
-      });
-
+      const boardEl = document.getElementById("board");
       const evalEl = document.getElementById("eval");
       const roomEl = document.getElementById("room");
       const roleEl = document.getElementById("role");
@@ -153,6 +187,12 @@
         const proto = location.protocol === "https:" ? "wss" : "ws";
         return `${proto}://${location.host}/ws`;
       }
+
+      const board = new Chessboard(boardEl, {
+        position: FEN.start,
+        assetsUrl: "https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/",
+        responsive: true
+      });
 
       function connect(room) {
         if (ws) ws.close();
@@ -201,18 +241,33 @@
         ws.onerror = () => log("socket error");
       }
 
+      // Enable input: allow drag/drop and ship moves to server
       board.enableMoveInput((event) => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-          event.cancel();
-          return;
+        if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
+          // allow picking up a piece
+          return true;
         }
-        ws.send(JSON.stringify({
-          type: "move",
-          from: event.from,
-          to: event.to,
-          promotion: "q"
-        }));
-        event.accept();
+
+        if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+
+          const from = event.squareFrom;
+          const to = event.squareTo;
+
+          ws.send(
+            JSON.stringify({
+              type: "move",
+              from,
+              to,
+              promotion: "q"
+            })
+          );
+
+          // allow drop; server will correct via authoritative "state"
+          return true;
+        }
+
+        return true;
       });
 
       document.getElementById("join").onclick = () => {
@@ -233,8 +288,9 @@
         log("room link copied");
       };
 
+      // Auto-join if URL has ?room=XXXX
       const roomParam = new URL(location.href).searchParams.get("room");
-      if (roomParam) connect(roomParam.toUpperCase());
+      if (roomParam) connect(roomParam.trim().toUpperCase());
     </script>
   </body>
 </html>
