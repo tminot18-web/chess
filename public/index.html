@@ -5,10 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess</title>
 
-    <!-- ✅ LOCAL cm-chessboard CSS (served from /public/cm-assets/...) -->
     <link rel="stylesheet" href="/cm-assets/chessboard.css" />
-
-    <!-- Optional: avoid favicon 404 -->
     <link rel="icon" href="data:," />
 
     <style>
@@ -21,7 +18,6 @@
         justify-content: center;
         background: #fff;
       }
-
       .wrap {
         display: flex;
         gap: 28px;
@@ -31,8 +27,6 @@
         width: min(1100px, 100%);
         box-sizing: border-box;
       }
-
-      /* Keep board from collapsing */
       #board {
         width: 520px;
         height: 520px;
@@ -43,7 +37,6 @@
         overflow: hidden;
         background: #fff;
       }
-
       .side {
         width: 320px;
         flex: 0 0 320px;
@@ -51,25 +44,22 @@
         flex-direction: column;
         gap: 14px;
       }
-
       .eval {
         font-size: 56px;
         font-weight: 950;
         line-height: 1;
+        letter-spacing: -0.02em;
       }
-
       .sub {
         color: #666;
         font-size: 14px;
       }
-
       .row {
         display: flex;
         gap: 10px;
         align-items: center;
         flex-wrap: wrap;
       }
-
       input {
         padding: 10px 12px;
         font-size: 14px;
@@ -78,7 +68,6 @@
         width: 140px;
         text-transform: uppercase;
       }
-
       button {
         padding: 12px 14px;
         font-size: 16px;
@@ -87,7 +76,10 @@
         background: #fafafa;
         cursor: pointer;
       }
-
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
       .pill {
         display: inline-flex;
         align-items: center;
@@ -97,7 +89,6 @@
         padding: 8px 12px;
         font-size: 14px;
       }
-
       .log {
         border: 1px solid #eee;
         border-radius: 14px;
@@ -135,8 +126,8 @@
       <div id="board"></div>
 
       <div class="side">
-        <div class="eval" id="eval">…</div>
-        <div class="sub">Truth-only eval. No hints. No undo. Multiplayer rooms.</div>
+        <div class="eval" id="eval">+0.0</div>
+        <div class="sub" id="status">Connect to play. Truth-only eval. No hints. No undo.</div>
 
         <div class="row">
           <span class="pill">Room <b id="room">—</b></span>
@@ -151,8 +142,8 @@
         </div>
 
         <div class="row">
-          <button id="restart">Restart</button>
-          <button id="copy">Copy Room Link</button>
+          <button id="restart" disabled>Restart</button>
+          <button id="copy" disabled>Copy Room Link</button>
         </div>
 
         <div class="log" id="log"></div>
@@ -161,19 +152,31 @@
     </div>
 
     <script type="module">
-      // ✅ Import the board logic from unpkg (JS only)
-      // Assets (pieces/styles) are LOCAL via assetsUrl below.
       import { Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
 
       const boardEl = document.getElementById("board");
       const evalEl = document.getElementById("eval");
+      const statusEl = document.getElementById("status");
       const roomEl = document.getElementById("room");
       const roleEl = document.getElementById("role");
       const playersEl = document.getElementById("players");
       const logEl = document.getElementById("log");
 
+      const joinBtn = document.getElementById("join");
+      const createBtn = document.getElementById("create");
+      const restartBtn = document.getElementById("restart");
+      const copyBtn = document.getElementById("copy");
+      const roomInput = document.getElementById("roomInput");
+
       let ws = null;
       let currentRoom = null;
+      let myRole = "spectator";
+
+      // authoritative fen (from server)
+      let currentFen = FEN.start;
+
+      // used to ignore stale evals
+      let currentPly = 0;
 
       function log(msg) {
         const d = document.createElement("div");
@@ -183,7 +186,7 @@
       }
 
       function fmt(n) {
-        return (n > 0 ? "+" : "") + n.toFixed(1);
+        return (n > 0 ? "+" : "") + Number(n).toFixed(1);
       }
 
       function wsUrl() {
@@ -191,19 +194,76 @@
         return `${proto}://${location.host}/ws`;
       }
 
-      // ✅ THE WHOLE POINT: use LOCAL assets to avoid CDN path hell
+      function plyFromFen(fen) {
+        // fen format: "pieces turn castling ep halfmove fullmove"
+        const parts = (fen || "").split(" ");
+        const turn = parts[1] || "w";
+        const fullmove = parseInt(parts[5] || "1", 10);
+        // ply count (starting position = 0)
+        // After 1.e4 => fullmove=1, turn=b => ply=1
+        // After ...c5 => fullmove=2, turn=w => ply=2
+        const base = (fullmove - 1) * 2;
+        return base + (turn === "b" ? 1 : 0);
+      }
+
+      function isMyTurn(fen) {
+        const parts = (fen || "").split(" ");
+        const turn = parts[1] || "w";
+        if (myRole === "white") return turn === "w";
+        if (myRole === "black") return turn === "b";
+        return false;
+      }
+
+      function canInteract() {
+        return myRole === "white" || myRole === "black";
+      }
+
+      function setStatus() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          statusEl.textContent = "Disconnected. Refresh or re-join.";
+          restartBtn.disabled = true;
+          copyBtn.disabled = true;
+          return;
+        }
+
+        if (!canInteract()) {
+          statusEl.textContent = "Spectating. Create/Join to get a seat (white/black).";
+          restartBtn.disabled = true;
+        } else if (!isMyTurn(currentFen)) {
+          statusEl.textContent = "Opponent’s turn.";
+          restartBtn.disabled = false;
+        } else {
+          statusEl.textContent = "Your turn.";
+          restartBtn.disabled = false;
+        }
+
+        copyBtn.disabled = !currentRoom;
+      }
+
+      // ✅ LOCAL assets
       const board = new Chessboard(boardEl, {
         position: FEN.start,
         responsive: true,
         assetsUrl: "/cm-assets/"
       });
 
+      function forceSnapback() {
+        // re-apply authoritative fen from server
+        board.setPosition(currentFen);
+      }
+
       function connect(room) {
         if (ws) ws.close();
         ws = new WebSocket(wsUrl());
 
-        evalEl.textContent = "…";
+        evalEl.textContent = "+0.0";
         logEl.textContent = "";
+        myRole = "spectator";
+        currentRoom = null;
+        currentFen = FEN.start;
+        currentPly = 0;
+        board.setPosition(currentFen);
+        setStatus();
 
         ws.onopen = () => {
           log("connected");
@@ -215,32 +275,83 @@
 
           if (msg.type === "joined") {
             currentRoom = msg.room;
+            myRole = msg.role;
+
             roomEl.textContent = msg.room;
             roleEl.textContent = msg.role;
+
             log(`joined ${msg.room} as ${msg.role}`);
 
             const u = new URL(location.href);
             u.searchParams.set("room", msg.room);
             history.replaceState({}, "", u);
+
+            // enable buttons once in a room
+            restartBtn.disabled = !canInteract();
+            copyBtn.disabled = false;
+
+            setStatus();
           }
 
-          if (msg.type === "presence") playersEl.textContent = msg.players;
-          if (msg.type === "state") board.setPosition(msg.fen);
-          if (msg.type === "eval") evalEl.textContent = fmt(msg.score);
-          if (msg.type === "illegal") log("illegal move");
+          if (msg.type === "presence") {
+            playersEl.textContent = msg.players;
+          }
+
+          if (msg.type === "state") {
+            currentFen = msg.fen;
+            currentPly = plyFromFen(currentFen);
+            board.setPosition(currentFen);
+            setStatus();
+          }
+
+          if (msg.type === "eval") {
+            // If server sends stale evals, ignore them.
+            // If server doesn't include ply, we still do a best-effort: accept.
+            // (If you want perfect matching, we’ll add ply on server next.)
+            if (typeof msg.ply === "number" && msg.ply !== currentPly) return;
+
+            evalEl.textContent = fmt(msg.score);
+          }
+
+          if (msg.type === "illegal") {
+            log("illegal / not your turn");
+            forceSnapback();
+            setStatus();
+          }
         };
 
-        ws.onclose = () => log("disconnected");
-        ws.onerror = () => log("socket error");
+        ws.onclose = () => {
+          log("disconnected");
+          setStatus();
+        };
+
+        ws.onerror = () => {
+          log("socket error");
+          setStatus();
+        };
       }
 
-      // Send moves to server; server is authoritative and will broadcast state/eval.
+      // ✅ Turn-aware + snapback on reject
       board.enableMoveInput((event) => {
-        if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return true;
+        // Disallow any interaction if you're not seated
+        if (!canInteract()) return false;
+
+        if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
+          // Only allow grabbing a piece on your turn
+          return isMyTurn(currentFen);
+        }
 
         if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
+          // Only allow drop on your turn
+          if (!isMyTurn(currentFen)) {
+            log("not your turn");
+            forceSnapback();
+            return false;
+          }
+
           if (!ws || ws.readyState !== WebSocket.OPEN) return false;
 
+          // Send move to server; server will broadcast new authoritative state
           ws.send(
             JSON.stringify({
               type: "move",
@@ -250,34 +361,38 @@
             })
           );
 
-          // allow drop; server will correct if illegal
+          // Important: we *don't* apply the move locally; wait for server.
+          // Returning true allows the UX to drop; if server rejects, we snap back.
           return true;
         }
 
         return true;
       });
 
-      document.getElementById("join").onclick = () => {
-        const code = document.getElementById("roomInput").value.trim().toUpperCase();
+      joinBtn.onclick = () => {
+        const code = roomInput.value.trim().toUpperCase();
         if (code) connect(code);
       };
 
-      document.getElementById("create").onclick = () => connect("");
+      createBtn.onclick = () => connect("");
 
-      document.getElementById("restart").onclick = () => {
-        if (ws) ws.send(JSON.stringify({ type: "restart" }));
+      restartBtn.onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "restart" }));
+        }
       };
 
-      document.getElementById("copy").onclick = async () => {
+      copyBtn.onclick = async () => {
         const u = new URL(location.href);
         if (currentRoom) u.searchParams.set("room", currentRoom);
         await navigator.clipboard.writeText(u.toString());
         log("room link copied");
       };
 
-      // Auto-join room from URL if present
+      // Auto-join from URL
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) connect(roomParam.trim().toUpperCase());
+      else setStatus();
     </script>
   </body>
 </html>
