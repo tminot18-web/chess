@@ -1,688 +1,147 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Live Eval Chess</title>
+<script src="/socket.io/socket.io.js"></script>
+<script type="module">
+  import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
 
-    <link rel="stylesheet" href="/cm-assets/chessboard.css" />
-    <link rel="icon" href="data:," />
+  // ---------- Socket ----------
+  let socket = null;
 
-    <style>
-      :root {
-        --bg0: #0b0f18;
-        --bg1: #0e1424;
-        --card: rgba(16, 22, 38, 0.78);
-        --border: rgba(255, 255, 255, 0.10);
-        --text: rgba(255, 255, 255, 0.92);
-        --muted: rgba(255, 255, 255, 0.60);
-        --shadow: 0 22px 70px rgba(0, 0, 0, 0.45);
+  function connectSocket() {
+    if (socket) return socket;
 
-        --btn: rgba(255, 255, 255, 0.08);
-        --btnHover: rgba(255, 255, 255, 0.12);
-        --input: rgba(255, 255, 255, 0.10);
-        --pill: rgba(255, 255, 255, 0.08);
+    socket = io({
+      transports: ["polling", "websocket"],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 800,
+      timeout: 10000,
+    });
 
-        --evalPill: rgba(255, 255, 255, 0.92);
-        --evalText: rgba(0, 0, 0, 0.92);
+    socket.on("connect", () => sysLocal("connected"));
+    socket.on("disconnect", (r) => sysLocal(`disconnected`));
+    socket.on("connect_error", (e) => {
+      console.error(e);
+      sysLocal(`socket error`);
+    });
 
-        --accent: rgba(255, 0, 120, 0.45);
-      }
+    // ---- server events ----
+    socket.on("status", (m) => sysLocal(m.msg));
+    socket.on("room:created", (m) => sysLocal(`room ${m.room} created`));
 
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background:
-          radial-gradient(1100px 800px at 20% 20%, rgba(255,255,255,0.06) 0%, transparent 55%),
-          radial-gradient(900px 700px at 80% 30%, rgba(255,0,120,0.08) 0%, transparent 60%),
-          radial-gradient(900px 700px at 60% 90%, rgba(0,160,255,0.10) 0%, transparent 62%),
-          linear-gradient(180deg, var(--bg0), var(--bg1));
-        color: var(--text);
-      }
+    socket.on("room:joined", (m) => {
+      currentRoom = m.room;
+      myRole = m.role === "w" ? "white" : "black";
+      roomEl.textContent = m.room;
+      roleEl.textContent = myRole;
+      playersEl.textContent = m.players;
+      setOrientationForRole();
+      restartBtn.disabled = false;
+    });
 
-      .wrap {
-        display: flex;
-        gap: 28px;
-        align-items: flex-start;
-        justify-content: center;
-        padding: 22px;
-        width: min(1120px, 100%);
-      }
+    socket.on("room:update", (m) => {
+      playersEl.textContent = m.players;
+    });
 
-      #board {
-        width: 520px;
-        height: 520px;
-        flex: 0 0 520px;
-        min-width: 520px;
-        min-height: 520px;
-        border-radius: 18px;
-        overflow: hidden;
-        background: #fff;
-        box-shadow: var(--shadow);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-      }
+    socket.on("game:start", () => {
+      sysLocal("game started");
+    });
 
-      .side {
-        width: 460px;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
+    socket.on("move", ({ fen }) => {
+      currentFen = fen;
+      board.setPosition(fen);
+    });
 
-      .card {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 18px;
-        padding: 14px;
-        box-shadow: var(--shadow);
-        backdrop-filter: blur(10px);
-      }
+    socket.on("chat", (m) => addMessage({
+      kind: "chat",
+      at: new Date().toTimeString().slice(0, 8),
+      from: "opponent",
+      text: m.text,
+    }));
 
-      .titleRow {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 12px;
-      }
+    return socket;
+  }
 
-      .title {
-        font-size: 16px;
-        font-weight: 950;
-        letter-spacing: -0.01em;
-      }
+  // ---------- UI helpers ----------
+  const roomEl = document.getElementById("room");
+  const roleEl = document.getElementById("role");
+  const playersEl = document.getElementById("players");
+  const playOnlineBtn = document.getElementById("playOnline");
+  const createBtn = document.getElementById("create");
+  const joinBtn = document.getElementById("join");
+  const roomInput = document.getElementById("roomInput");
+  const restartBtn = document.getElementById("restart");
+  const feedEl = document.getElementById("feed");
 
-      .sub {
-        color: var(--muted);
-        font-size: 13px;
-      }
+  let currentRoom = null;
+  let myRole = "spectator";
+  let currentFen = FEN.start;
 
-      .row {
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
+  function sysLocal(text) {
+    addMessage({
+      kind: "sys",
+      at: new Date().toTimeString().slice(0, 8),
+      text,
+    });
+  }
 
-      button {
-        padding: 12px 14px;
-        font-size: 15px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: var(--btn);
-        cursor: pointer;
-        font-weight: 700;
-        color: var(--text);
-      }
-      button:hover { background: var(--btnHover); }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
+  function addMessage({ kind, at, from, text }) {
+    const row = document.createElement("div");
+    row.className = `msg ${kind === "sys" ? "sys" : ""}`;
 
-      input {
-        padding: 10px 12px;
-        font-size: 14px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        width: 160px;
-        text-transform: uppercase;
-        background: var(--input);
-        color: var(--text);
-        outline: none;
-      }
-      input::placeholder { color: rgba(255,255,255,0.45); }
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = kind === "sys" ? `${at} · sys` : `${at} · ${from}`;
 
-      .pill {
-        padding: 8px 12px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        background: var(--pill);
-        font-size: 13px;
-      }
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
 
-      /* Eval bar */
-      .evalWrap {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        gap: 12px;
-        align-items: center;
-      }
+    row.appendChild(meta);
+    row.appendChild(bubble);
+    feedEl.appendChild(row);
+    feedEl.scrollTop = feedEl.scrollHeight;
+  }
 
-      .bar {
-        position: relative;
-        height: 18px;
-        border-radius: 999px;
-        overflow: hidden;
-        border: 1px solid var(--border);
-        background:
-          linear-gradient(
-            90deg,
-            rgba(0, 0, 0, 0.92) 0%,
-            rgba(0, 0, 0, 0.92) 50%,
-            rgba(255, 255, 255, 0.95) 50%,
-            rgba(255, 255, 255, 0.95) 100%
-          );
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
-      }
+  // ---------- Chessboard ----------
+  const board = new Chessboard(document.getElementById("board"), {
+    position: FEN.start,
+    assetsUrl: "/cm-assets/",
+    responsive: true,
+  });
 
-      .midline {
-        position: absolute;
-        left: 50%;
-        top: 0;
-        bottom: 0;
-        width: 2px;
-        transform: translateX(-1px);
-        background: var(--accent);
-      }
+  function setOrientationForRole() {
+    board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
+  }
 
-      .whiteFill, .blackFill {
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        width: 0%;
-      }
-      .whiteFill { left: 50%; background: rgba(255, 255, 255, 0.95); }
-      .blackFill { right: 50%; background: rgba(0, 0, 0, 0.92); }
+  board.enableMoveInput((event) => {
+    if (!socket || !currentRoom) return false;
 
-      .evalNum {
-        font-size: 26px;
-        font-weight: 950;
-        letter-spacing: -0.02em;
-        min-width: 78px;
-        text-align: right;
-        color: var(--evalText);
-        background: var(--evalPill);
-        padding: 6px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(0,0,0,0.10);
-        box-shadow: 0 10px 34px rgba(0,0,0,0.35);
-      }
-
-      /* Chat feed */
-      .feed {
-        height: 220px;
-        overflow: auto;
-        border-radius: 14px;
-        border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.05);
-        padding: 10px;
-      }
-
-      .msg {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 10px;
-        padding: 8px 8px;
-        border-radius: 12px;
-      }
-
-      .msg + .msg { margin-top: 6px; }
-
-      .meta {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 11px;
-        color: rgba(255,255,255,0.60);
-        white-space: nowrap;
-      }
-
-      .bubble {
-        font-size: 13px;
-        line-height: 1.35;
-        color: rgba(255,255,255,0.92);
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-
-      .sys .bubble {
-        color: rgba(255,255,255,0.78);
-      }
-
-      .sys .meta {
-        color: rgba(255,255,255,0.45);
-      }
-
-      .chatRow {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        gap: 10px;
-        margin-top: 10px;
-      }
-
-      .chatInput {
-        padding: 10px 12px;
-        font-size: 14px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: rgba(255,255,255,0.08);
-        color: var(--text);
-        outline: none;
-        width: 100%;
-        text-transform: none;
-      }
-
-      @media (max-width: 960px) {
-        .wrap { flex-direction: column; align-items: center; }
-        #board {
-          width: min(92vw, 520px);
-          height: min(92vw, 520px);
-          flex: 0 0 auto;
-          min-width: 0;
-          min-height: 0;
-        }
-        .side { width: min(92vw, 620px); }
-      }
-    </style>
-  </head>
-
-  <body>
-    <div class="wrap">
-      <div id="board"></div>
-
-      <div class="side">
-        <div class="card">
-          <div class="titleRow">
-            <div>
-              <div class="title">Live Eval</div>
-              <div class="sub">No hints. No undo. Just truth.</div>
-            </div>
-          </div>
-
-          <div style="height: 10px"></div>
-
-          <div class="evalWrap">
-            <div class="bar">
-              <div id="blackFill" class="blackFill"></div>
-              <div id="whiteFill" class="whiteFill"></div>
-              <div class="midline"></div>
-            </div>
-            <div id="evalNum" class="evalNum">+0.0</div>
-          </div>
-
-          <div style="height: 10px"></div>
-
-          <div class="row">
-            <span class="pill">Room <b id="room">—</b></span>
-            <span class="pill">Role <b id="role">—</b></span>
-            <span class="pill">Players <b id="players">0</b></span>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="row">
-            <button id="playOnline">Play Online</button>
-            <button id="cancelSearch" disabled>Cancel</button>
-            <button id="restart" disabled>Restart</button>
-          </div>
-
-          <div style="height: 10px"></div>
-
-          <div class="row">
-            <input id="roomInput" placeholder="ROOM CODE" maxlength="10" />
-            <button id="join">Join</button>
-            <button id="create">Create</button>
-            <button id="copy" disabled>Copy Link</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="feed" id="feed"></div>
-
-          <div class="chatRow">
-            <input id="chatInput" class="chatInput" placeholder="type here… (enter to send)" />
-            <button id="sendChat">Send</button>
-          </div>
-
-          <div class="sub" style="margin-top: 10px">
-            Positive = White better · Negative = Black better
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <script type="module">
-      import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
-
-      const roomEl = document.getElementById("room");
-      const roleEl = document.getElementById("role");
-      const playersEl = document.getElementById("players");
-
-      const joinBtn = document.getElementById("join");
-      const createBtn = document.getElementById("create");
-      const restartBtn = document.getElementById("restart");
-      const copyBtn = document.getElementById("copy");
-      const roomInput = document.getElementById("roomInput");
-
-      const playOnlineBtn = document.getElementById("playOnline");
-      const cancelSearchBtn = document.getElementById("cancelSearch");
-
-      const whiteFill = document.getElementById("whiteFill");
-      const blackFill = document.getElementById("blackFill");
-      const evalNum = document.getElementById("evalNum");
-
-      const feedEl = document.getElementById("feed");
-      const chatInput = document.getElementById("chatInput");
-      const sendChatBtn = document.getElementById("sendChat");
-
-      let ws = null;
-      let currentRoom = null;
-      let myRole = "spectator";
-      let currentFen = FEN.start;
-      let currentPly = 0;
-
-      const EVAL_MAX = 10.0;
-
-      function wsUrl() {
-        const proto = location.protocol === "https:" ? "wss" : "ws";
-        return `${proto}://${location.host}/ws`;
-      }
-
-      function fmt(n) {
-        n = Number(n) || 0;
-        return (n > 0 ? "+" : "") + n.toFixed(1);
-      }
-
-      function plyFromFen(fen) {
-        const parts = (fen || "").split(" ");
-        const turn = parts[1] || "w";
-        const fullmove = parseInt(parts[5] || "1", 10);
-        const base = (fullmove - 1) * 2;
-        return base + (turn === "b" ? 1 : 0);
-      }
-
-      function isMyTurn(fen) {
-        const parts = (fen || "").split(" ");
-        const turn = parts[1] || "w";
-        if (myRole === "white") return turn === "w";
-        if (myRole === "black") return turn === "b";
-        return false;
-      }
-
-      function canInteract() {
-        return myRole === "white" || myRole === "black";
-      }
-
-      const board = new Chessboard(document.getElementById("board"), {
-        position: FEN.start,
-        responsive: true,
-        assetsUrl: "/cm-assets/",
-        orientation: COLOR.white,
+    if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
+      socket.emit("move", {
+        room: currentRoom,
+        move: { from: event.squareFrom, to: event.squareTo, promotion: "q" },
+        fen: board.getPosition(),
       });
+      return true;
+    }
+    return true;
+  });
 
-      function setOrientationForRole() {
-        if (myRole === "black") board.setOrientation(COLOR.black);
-        else board.setOrientation(COLOR.white);
-      }
+  // ---------- Buttons ----------
+  playOnlineBtn.onclick = () => {
+    const s = connectSocket();
+    s.emit("room:create");
+  };
 
-      function renderEvalBar(score) {
-        score = Number(score) || 0;
-        const clamped = Math.max(-EVAL_MAX, Math.min(EVAL_MAX, score));
-        const norm = clamped / EVAL_MAX;
-        const fillPct = Math.abs(norm) * 50;
+  createBtn.onclick = () => {
+    const s = connectSocket();
+    s.emit("room:create");
+  };
 
-        if (norm > 0) {
-          whiteFill.style.width = `${fillPct}%`;
-          blackFill.style.width = `0%`;
-        } else if (norm < 0) {
-          blackFill.style.width = `${fillPct}%`;
-          whiteFill.style.width = `0%`;
-        } else {
-          whiteFill.style.width = `0%`;
-          blackFill.style.width = `0%`;
-        }
-
-        evalNum.textContent = fmt(score);
-      }
-
-      function addMessage({ kind, at, from, text }) {
-        const row = document.createElement("div");
-        row.className = `msg ${kind === "sys" ? "sys" : ""}`;
-
-        const meta = document.createElement("div");
-        meta.className = "meta";
-        meta.textContent = kind === "sys" ? `${at} · sys` : `${at} · ${from}`;
-
-        const bubble = document.createElement("div");
-        bubble.className = "bubble";
-        bubble.textContent = text;
-
-        row.appendChild(meta);
-        row.appendChild(bubble);
-
-        feedEl.appendChild(row);
-        feedEl.scrollTop = feedEl.scrollHeight;
-      }
-
-      function sysLocal(text) {
-        addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text });
-      }
-
-      function resetUi() {
-        myRole = "spectator";
-        currentRoom = null;
-        currentFen = FEN.start;
-        currentPly = 0;
-
-        roomEl.textContent = "—";
-        roleEl.textContent = "—";
-        playersEl.textContent = "0";
-
-        board.setPosition(currentFen);
-        setOrientationForRole();
-        renderEvalBar(0);
-
-        restartBtn.disabled = true;
-        copyBtn.disabled = true;
-
-        playOnlineBtn.disabled = false;
-        cancelSearchBtn.disabled = true;
-
-        feedEl.textContent = "";
-      }
-
-      function forceSnapback() {
-        board.setPosition(currentFen);
-      }
-
-      function sendChat() {
-        const text = (chatInput.value || "").trim();
-        if (!text) return;
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-          sysLocal("not connected");
-          return;
-        }
-        ws.send(JSON.stringify({ type: "chat", text }));
-        chatInput.value = "";
-      }
-
-      sendChatBtn.onclick = sendChat;
-      chatInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          sendChat();
-        }
-      });
-
-      function attachSocketHandlers() {
-        ws.onopen = () => sysLocal("connected");
-
-        ws.onmessage = (e) => {
-          const msg = JSON.parse(e.data);
-
-          if (msg.type === "chat") {
-            addMessage(msg);
-            return;
-          }
-
-          if (msg.type === "queued") {
-            playOnlineBtn.disabled = true;
-            cancelSearchBtn.disabled = false;
-            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "queued" });
-            return;
-          }
-
-          if (msg.type === "queueCanceled") {
-            playOnlineBtn.disabled = false;
-            cancelSearchBtn.disabled = true;
-            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "search canceled" });
-            return;
-          }
-
-          if (msg.type === "queueError") {
-            playOnlineBtn.disabled = false;
-            cancelSearchBtn.disabled = true;
-            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: `queue error: ${msg.message || "unknown"}` });
-            return;
-          }
-
-          if (msg.type === "matchFound") {
-            playOnlineBtn.disabled = false;
-            cancelSearchBtn.disabled = true;
-            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: `match found: room ${msg.room}` });
-            return;
-          }
-
-          if (msg.type === "joined") {
-            currentRoom = msg.room;
-            myRole = msg.role;
-
-            roomEl.textContent = msg.room;
-            roleEl.textContent = msg.role;
-
-            setOrientationForRole();
-
-            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: `joined ${msg.room} as ${msg.role}` });
-
-            const u = new URL(location.href);
-            u.searchParams.set("room", msg.room);
-            history.replaceState({}, "", u);
-
-            copyBtn.disabled = false;
-            restartBtn.disabled = !canInteract();
-            return;
-          }
-
-          if (msg.type === "presence") {
-            playersEl.textContent = msg.players;
-            return;
-          }
-
-          if (msg.type === "state") {
-            currentFen = msg.fen;
-            currentPly = plyFromFen(currentFen);
-            board.setPosition(currentFen);
-            restartBtn.disabled = !canInteract();
-            return;
-          }
-
-          if (msg.type === "eval") {
-            if (typeof msg.ply === "number" && msg.ply !== currentPly) return;
-            renderEvalBar(msg.score);
-            return;
-          }
-
-          if (msg.type === "illegal") {
-            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "illegal move" });
-            forceSnapback();
-            return;
-          }
-        };
-
-        ws.onclose = () => {
-          addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "disconnected" });
-        };
-
-        ws.onerror = () => {
-          addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "socket error" });
-        };
-      }
-
-      function connectForOnlineQueue() {
-        if (ws) ws.close();
-        ws = new WebSocket(wsUrl());
-        resetUi();
-        attachSocketHandlers();
-
-        // queue after open
-        ws.addEventListener("open", () => {
-          ws.send(JSON.stringify({ type: "queue" }));
-        }, { once: true });
-      }
-
-      function connectAndJoin(room) {
-        if (ws) ws.close();
-        ws = new WebSocket(wsUrl());
-        resetUi();
-        attachSocketHandlers();
-
-        ws.addEventListener("open", () => {
-          ws.send(JSON.stringify({ type: "join", room }));
-        }, { once: true });
-      }
-
-      // Move input
-      board.enableMoveInput((event) => {
-        if (!canInteract()) return false;
-
-        if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
-          return isMyTurn(currentFen);
-        }
-
-        if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
-          if (!isMyTurn(currentFen)) {
-            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "not your turn" });
-            forceSnapback();
-            return false;
-          }
-          if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-
-          ws.send(JSON.stringify({
-            type: "move",
-            from: event.squareFrom,
-            to: event.squareTo,
-            promotion: "q",
-          }));
-          return true;
-        }
-        return true;
-      });
-
-      // Buttons
-      playOnlineBtn.onclick = () => connectForOnlineQueue();
-
-      cancelSearchBtn.onclick = () => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "cancelQueue" }));
-        }
-      };
-
-      joinBtn.onclick = () => {
-        const code = roomInput.value.trim().toUpperCase();
-        if (code) connectAndJoin(code);
-      };
-
-      createBtn.onclick = () => connectAndJoin("");
-
-      restartBtn.onclick = () => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "restart" }));
-        }
-      };
-
-      copyBtn.onclick = async () => {
-        const u = new URL(location.href);
-        if (currentRoom) u.searchParams.set("room", currentRoom);
-        await navigator.clipboard.writeText(u.toString());
-        addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "room link copied" });
-      };
-
-      // Initial
-      renderEvalBar(0);
-
-      // Auto-join via URL param
-      const roomParam = new URL(location.href).searchParams.get("room");
-      if (roomParam) connectAndJoin(roomParam.trim().toUpperCase());
-    </script>
-  </body>
-</html>
+  joinBtn.onclick = () => {
+    const code = roomInput.value.trim().toUpperCase();
+    if (!code) return;
+    const s = connectSocket();
+    s.emit("room:join", { room: code });
+  };
+</script>
 
