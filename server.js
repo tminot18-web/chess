@@ -1,204 +1,190 @@
-// server.js (CommonJS) — Matchmaking queue + rooms + chat + move relay
-// Render-friendly. No room creation until 2 players are searching.
+// server.js
+// Live Eval Chess — Express + Socket.IO + matchmaking queue + auto-vendored Stockfish assets
 
 const path = require("path");
+const fs = require("fs");
+const fsp = fs.promises;
+const https = require("https");
 const http = require("http");
 const express = require("express");
 const { Server } = require("socket.io");
+const { Chess } = require("chess.js");
+
+const PORT = process.env.PORT || 3000;
+const HOST = "0.0.0.0";
 
 const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: { origin: "*" },
-  transports: ["polling", "websocket"],
-  allowUpgrades: true,
-  pingInterval: 25000,
-  pingTimeout: 20000,
 });
 
-// ---- Static site ----
-const PUBLIC_DIR = path.join(__dirname, "public");
-app.use(express.static(PUBLIC_DIR, { extensions: ["html"] }));
+// ---------- Stockfish vendoring ----------
+const ENGINE_DIR = path.join(__dirname, "public", "engine");
+const STOCKFISH_BASE = "https://cdn.jsdelivr.net/npm/stockfish.wasm@0.10.0";
 
-app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
-app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+const STOCKFISH_FILES = [
+  { name: "stockfish.worker.js", url: `${STOCKFISH_BASE}/stockfish.worker.js` },
+  { name: "stockfish.js", url: `${STOCKFISH_BASE}/stockfish.js` },
+  { name: "stockfish.wasm", url: `${STOCKFISH_BASE}/stockfish.wasm` },
+];
 
-// ---- Helpers ----
-function now() {
-  return new Date().toTimeString().slice(0, 8);
+function download(url) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, (res) => {
+        // handle redirects
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          return resolve(download(res.headers.location));
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        }
+        const chunks = [];
+        res.on("data", (d) => chunks.push(d));
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+      })
+      .on("error", reject);
+  });
 }
 
+async function ensureStockfishAssets() {
+  await fsp.mkdir(ENGINE_DIR, { recursive: true });
+  for (const f of STOCKFISH_FILES) {
+    const outPath = path.join(ENGINE_DIR, f.name);
+    try {
+      await fsp.access(outPath, fs.constants.R_OK);
+      // exists
+    } catch {
+      console.log(`[engine] downloading ${f.name}…`);
+      const buf = await download(f.url);
+      await fsp.writeFile(outPath, buf);
+      console.log(`[engine] wrote ${outPath}`);
+    }
+  }
+}
+
+// ---------- Express static ----------
+app.use(express.static(path.join(__dirname, "public")));
+
+// ---------- Matchmaking + rooms ----------
+const queue = []; // socket.id[]
+const rooms = new Map(); // roomCode -> { players: {w: socketId|null, b: socketId|null}, game: Chess, moveNumber: number }
+
 function makeRoomCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
-  for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 6; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
   return out;
 }
 
-// ---- State ----
-/**
- * rooms: roomCode -> {
- *   players: [socketIdWhite, socketIdBlack] (max 2)
- *   colorBySocket: Map(socketId -> "w"|"b")
- * }
- */
-const rooms = new Map();
-
-/**
- * queue: array of socket ids waiting for a match
- * We store socket ids to avoid keeping dead socket references.
- */
-let queue = [];
-
-/**
- * reverse lookup: socketId -> roomCode (if joined)
- */
-const socketRoom = new Map();
-
-// ---- Chat helpers ----
-function emitSys(room, text) {
-  io.to(room).emit("chat", { kind: "sys", at: now(), text });
-}
-function emitUser(room, fromRole, text) {
-  io.to(room).emit("chat", { kind: "user", at: now(), from: fromRole, text });
+function safeEmit(socket, event, payload) {
+  try {
+    socket.emit(event, payload);
+  } catch {}
 }
 
-function roomInfo(roomCode) {
-  const r = rooms.get(roomCode);
-  return { room: roomCode, players: r ? r.players.length : 0 };
+function broadcastChat(room, msg) {
+  io.to(room).emit("chat", msg);
+}
+
+function sys(room, text) {
+  broadcastChat(room, { kind: "sys", at: new Date().toTimeString().slice(0, 8), text });
 }
 
 function removeFromQueue(socketId) {
   const idx = queue.indexOf(socketId);
-  if (idx !== -1) queue.splice(idx, 1);
+  if (idx >= 0) queue.splice(idx, 1);
 }
 
-function cleanupRoomIfEmpty(roomCode) {
-  const r = rooms.get(roomCode);
-  if (!r) return;
-  if (!r.players || r.players.length === 0) {
-    rooms.delete(roomCode);
+function leaveAllRooms(socket) {
+  for (const r of socket.rooms) {
+    if (r !== socket.id) socket.leave(r);
   }
 }
 
-function leaveRoom(socket) {
-  const socketId = socket.id;
-  const roomCode = socketRoom.get(socketId);
-  if (!roomCode) return;
-
-  const r = rooms.get(roomCode);
-  socketRoom.delete(socketId);
-
-  try {
-    socket.leave(roomCode);
-  } catch {}
-
-  if (r) {
-    r.players = r.players.filter((id) => id !== socketId);
-    r.colorBySocket.delete(socketId);
-
-    io.to(roomCode).emit("room:update", roomInfo(roomCode));
-    emitSys(roomCode, "player left");
-
-    // if one player remains, notify them
-    if (r.players.length === 1) {
-      const remaining = r.players[0];
-      io.to(remaining).emit("opponent:left");
-    }
-
-    cleanupRoomIfEmpty(roomCode);
-  }
+function cleanupRoom(room) {
+  const info = rooms.get(room);
+  if (!info) return;
+  const { w, b } = info.players;
+  if (!w && !b) rooms.delete(room);
 }
 
-function joinRoomAs(socket, roomCode, role /* "w"|"b" */) {
-  // create room if needed
-  if (!rooms.has(roomCode)) {
-    rooms.set(roomCode, { players: [], colorBySocket: new Map() });
+function getRoomForSocket(socket) {
+  for (const r of socket.rooms) {
+    if (r !== socket.id && rooms.has(r)) return r;
   }
-  const r = rooms.get(roomCode);
-
-  // prevent duplicates
-  if (!r.players.includes(socket.id)) {
-    if (r.players.length >= 2) {
-      socket.emit("room:error", { msg: "Room full" });
-      return false;
-    }
-    r.players.push(socket.id);
-  }
-  r.colorBySocket.set(socket.id, role);
-
-  socket.join(roomCode);
-  socketRoom.set(socket.id, roomCode);
-
-  socket.emit("room:joined", {
-    room: roomCode,
-    role,
-    players: r.players.length,
-  });
-
-  io.to(roomCode).emit("room:update", roomInfo(roomCode));
-  return true;
+  return null;
 }
 
-// ---- Matchmaking ----
+function roleForSocket(room, socketId) {
+  const info = rooms.get(room);
+  if (!info) return null;
+  if (info.players.w === socketId) return "w";
+  if (info.players.b === socketId) return "b";
+  return null;
+}
+
+function emitRoomUpdate(room) {
+  const info = rooms.get(room);
+  if (!info) return;
+  const players = (info.players.w ? 1 : 0) + (info.players.b ? 1 : 0);
+  io.to(room).emit("room:update", { room, players });
+}
+
+function roomSnapshot(room) {
+  const info = rooms.get(room);
+  if (!info) return null;
+  return {
+    room,
+    fen: info.game.fen(),
+    pgn: info.game.pgn(),
+    moveNumber: info.moveNumber,
+    turn: info.game.turn(),
+    players: info.players,
+  };
+}
+
 function tryMatchmake() {
-  // drop any stale ids (sockets that no longer exist)
-  queue = queue.filter((id) => io.sockets.sockets.get(id));
-
   while (queue.length >= 2) {
     const a = queue.shift();
     const b = queue.shift();
-    if (!a || !b) continue;
-
     const sa = io.sockets.sockets.get(a);
     const sb = io.sockets.sockets.get(b);
     if (!sa || !sb) continue;
 
-    // ensure they aren't already in rooms
-    leaveRoom(sa);
-    leaveRoom(sb);
-
     const room = makeRoomCode();
-    rooms.set(room, { players: [], colorBySocket: new Map() });
+    rooms.set(room, { players: { w: a, b: b }, game: new Chess(), moveNumber: 0 });
 
-    // join + assign roles
-    joinRoomAs(sa, room, "w");
-    joinRoomAs(sb, room, "b");
+    sa.join(room);
+    sb.join(room);
 
-    // tell them match found + game start
-    sa.emit("match:found", { room, role: "w" });
-    sb.emit("match:found", { room, role: "b" });
+    safeEmit(sa, "queue:status", { state: "idle" });
+    safeEmit(sb, "queue:status", { state: "idle" });
 
-    emitSys(room, "match found");
-    emitSys(room, "game started");
+    safeEmit(sa, "match:found", { room, role: "w" });
+    safeEmit(sb, "match:found", { room, role: "b" });
 
-    // done
-    return;
+    sys(room, `match found: ${room}`);
+    emitRoomUpdate(room);
+    io.to(room).emit("state:sync", roomSnapshot(room));
   }
 }
 
-// ---- Socket events ----
+// ---------- Socket.IO ----------
 io.on("connection", (socket) => {
-  const transport = socket.conn?.transport?.name;
-  console.log("[socket] connected", socket.id, "transport:", transport);
+  // Let client show "connected" etc.
+  socket.emit("chat", { kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "connected" });
 
-  socket.emit("status", { msg: "connected" });
-
-  // ---- Queue ----
   socket.on("queue:join", () => {
-    // remove from existing room
-    leaveRoom(socket);
-
-    // already queued?
-    if (queue.includes(socket.id)) {
-      socket.emit("queue:status", { state: "searching" });
-      return;
-    }
+    removeFromQueue(socket.id);
+    leaveAllRooms(socket);
 
     queue.push(socket.id);
     socket.emit("queue:status", { state: "searching" });
-    socket.emit("chat", { kind: "sys", at: now(), text: "searching for opponent…" });
 
     tryMatchmake();
   });
@@ -206,105 +192,155 @@ io.on("connection", (socket) => {
   socket.on("queue:cancel", () => {
     removeFromQueue(socket.id);
     socket.emit("queue:status", { state: "idle" });
-    socket.emit("chat", { kind: "sys", at: now(), text: "search canceled" });
   });
 
-  // ---- Manual rooms (still useful for friend links) ----
   socket.on("room:create", () => {
-    // leave queue + existing room
     removeFromQueue(socket.id);
-    leaveRoom(socket);
+    leaveAllRooms(socket);
 
-    let code = makeRoomCode();
-    while (rooms.has(code)) code = makeRoomCode();
+    let room = makeRoomCode();
+    while (rooms.has(room)) room = makeRoomCode();
 
-    rooms.set(code, { players: [], colorBySocket: new Map() });
+    rooms.set(room, { players: { w: socket.id, b: null }, game: new Chess(), moveNumber: 0 });
+    socket.join(room);
 
-    // creator joins as white
-    joinRoomAs(socket, code, "w");
-    socket.emit("room:created", { room: code });
-
-    emitSys(code, "room created");
+    socket.emit("room:created", { room });
+    sys(room, `room created: ${room}`);
+    emitRoomUpdate(room);
+    io.to(room).emit("state:sync", roomSnapshot(room));
   });
 
   socket.on("room:join", ({ room }) => {
-    removeFromQueue(socket.id);
-    leaveRoom(socket);
-
-    const code = String(room || "").toUpperCase().trim();
+    const code = String(room || "").trim().toUpperCase();
     if (!code) return;
 
-    if (!rooms.has(code)) {
-      socket.emit("room:error", { msg: "Room not found" });
-      return;
-    }
-
-    const r = rooms.get(code);
-    if (r.players.length >= 2) {
-      socket.emit("room:error", { msg: "Room is full" });
-      return;
-    }
-
-    const role = r.players.length === 0 ? "w" : "b";
-    joinRoomAs(socket, code, role);
-
-    emitSys(code, "player joined");
-    if (r.players.length === 2) {
-      emitSys(code, "game started");
-      io.to(code).emit("game:start", { room: code });
-    }
-  });
-
-  socket.on("room:leave", () => {
     removeFromQueue(socket.id);
-    leaveRoom(socket);
+    leaveAllRooms(socket);
+
+    let info = rooms.get(code);
+    if (!info) {
+      // create room if it doesn't exist (friend links)
+      info = { players: { w: null, b: null }, game: new Chess(), moveNumber: 0 };
+      rooms.set(code, info);
+    }
+
+    // assign seat
+    let role = null;
+    if (!info.players.w) {
+      info.players.w = socket.id;
+      role = "w";
+    } else if (!info.players.b) {
+      info.players.b = socket.id;
+      role = "b";
+    } else {
+      // room full
+      socket.emit("room:error", { error: "room full" });
+      return;
+    }
+
+    socket.join(code);
+
+    const players = (info.players.w ? 1 : 0) + (info.players.b ? 1 : 0);
+
+    socket.emit("room:joined", { room: code, role, players });
+    sys(code, `player joined as ${role}`);
+    emitRoomUpdate(code);
+    io.to(code).emit("state:sync", roomSnapshot(code));
   });
 
-  // ---- Chat ----
+  socket.on("state:request", ({ room }) => {
+    const code = String(room || "").trim().toUpperCase();
+    if (!code) return;
+    const snap = roomSnapshot(code);
+    if (!snap) return;
+    socket.emit("state:sync", snap);
+  });
+
+  socket.on("move:submit", ({ room, move, clientMoveNumber }) => {
+    const code = String(room || "").trim().toUpperCase();
+    if (!code) return;
+    const info = rooms.get(code);
+    if (!info) return;
+
+    const role = roleForSocket(code, socket.id); // "w" | "b" | null
+    if (!role) {
+      socket.emit("move:rejected", { reason: "not_in_room", ...roomSnapshot(code) });
+      return;
+    }
+
+    // enforce turn
+    if (info.game.turn() !== role) {
+      socket.emit("move:rejected", { reason: "not_your_turn", ...roomSnapshot(code) });
+      return;
+    }
+
+    // resync if client is behind/ahead
+    if (typeof clientMoveNumber === "number" && clientMoveNumber !== info.moveNumber) {
+      socket.emit("move:rejected", { reason: "out_of_sync", ...roomSnapshot(code) });
+      return;
+    }
+
+    const result = info.game.move(move);
+    if (!result) {
+      socket.emit("move:rejected", { reason: "illegal_move", ...roomSnapshot(code) });
+      return;
+    }
+
+    info.moveNumber += 1;
+
+    const payload = {
+      room: code,
+      fen: info.game.fen(),
+      pgn: info.game.pgn(),
+      moveNumber: info.moveNumber,
+      move: result,
+    };
+
+    io.to(code).emit("move:accepted", payload);
+  });
+
   socket.on("chat:send", ({ text }) => {
-    const roomCode = socketRoom.get(socket.id);
-    if (!roomCode) return;
-
-    const r = rooms.get(roomCode);
-    if (!r) return;
-
-    const clean = String(text || "").trim().slice(0, 300);
-    if (!clean) return;
-
-    const role = r.colorBySocket.get(socket.id) === "w" ? "white" : "black";
-    emitUser(roomCode, role, clean);
+    const room = getRoomForSocket(socket);
+    if (!room) return;
+    const role = roleForSocket(room, socket.id) || "?";
+    const msg = {
+      kind: "user",
+      at: new Date().toTimeString().slice(0, 8),
+      from: role,
+      text: String(text || "").slice(0, 500),
+    };
+    broadcastChat(room, msg);
   });
 
-  // ---- Move relay (client validates legality with chess.js) ----
-  socket.on("move", ({ move, fen, pgn }) => {
-    const roomCode = socketRoom.get(socket.id);
-    if (!roomCode) return;
-
-    const r = rooms.get(roomCode);
-    if (!r) return;
-
-    if (!r.players.includes(socket.id)) return;
-
-    // send to opponent only
-    socket.to(roomCode).emit("move", { move, fen, pgn });
-  });
-
-  // ---- Disconnect ----
-  socket.on("disconnect", (reason) => {
-    console.log("[socket] disconnected", socket.id, "reason:", reason);
-
+  socket.on("disconnect", () => {
     removeFromQueue(socket.id);
-    leaveRoom(socket);
-  });
 
-  socket.on("connect_error", (err) => {
-    console.log("[socket] connect_error", socket.id, err?.message || err);
+    const room = getRoomForSocket(socket);
+    if (room) {
+      const info = rooms.get(room);
+      if (info) {
+        if (info.players.w === socket.id) info.players.w = null;
+        if (info.players.b === socket.id) info.players.b = null;
+        socket.to(room).emit("opponent:left");
+        sys(room, "opponent left");
+        emitRoomUpdate(room);
+        cleanupRoom(room);
+      }
+    }
   });
 });
 
-// ---- Start ----
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Live Eval Chess online on :${PORT}`);
-});
+// ---------- Boot ----------
+(async () => {
+  try {
+    await ensureStockfishAssets();
+    console.log("[engine] ready at /engine/");
+  } catch (e) {
+    console.error("[engine] failed to prepare stockfish assets:", e);
+  }
+
+  server.listen(PORT, HOST, () => {
+    console.log(`listening on http://${HOST}:${PORT}`);
+  });
+})();
 
