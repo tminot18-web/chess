@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess — Online</title>
 
-    <!-- cm-chessboard -->
     <link
       rel="stylesheet"
       href="https://unpkg.com/cm-chessboard@3.15.5/styles/cm-chessboard.css"
@@ -17,6 +16,11 @@
         --text: #e7eefc;
         --muted: #a7b4cf;
         --line: rgba(255, 255, 255, 0.08);
+
+        /* ✅ Sidebar (chat+controls) width target */
+        --sidebarW: 340px;
+        --gap: 14px;
+        --pad: 14px;
       }
 
       * { box-sizing: border-box; }
@@ -24,7 +28,7 @@
       html, body {
         height: 100%;
         margin: 0;
-        overflow: hidden; /* ✅ page never scrolls */
+        overflow: hidden; /* ✅ no page scrolling */
       }
 
       body {
@@ -36,13 +40,13 @@
         color: var(--text);
       }
 
-      /* ✅ Board should be the star: give left column most width, cap chat */
+      /* ✅ Layout: board dominates, sidebar is slim (about half of what you had) */
       .wrap {
         height: 100vh;
         display: grid;
-        grid-template-columns: minmax(720px, 1fr) 420px; /* ✅ board dominates */
-        gap: 14px;
-        padding: 14px;
+        grid-template-columns: 1fr var(--sidebarW);
+        gap: var(--gap);
+        padding: var(--pad);
       }
 
       .card {
@@ -52,6 +56,14 @@
         padding: 12px;
         box-shadow: 0 10px 30px rgba(0,0,0,0.25);
         overflow: hidden;
+        min-height: 0;
+      }
+
+      /* ---------- LEFT: BOARD (fills the freed space) ---------- */
+      .left {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 10px;
         min-height: 0;
       }
 
@@ -67,7 +79,6 @@
         margin: 0;
         letter-spacing: 0.2px;
       }
-
       .brand span {
         font-size: 12px;
         color: var(--muted);
@@ -83,35 +94,47 @@
         background: rgba(0,0,0,0.12);
       }
 
-      /* ✅ Left panel: board gets max space, controls are compact */
-      .left {
-        display: grid;
-        grid-template-rows: auto 1fr auto; /* topbar, board, controls */
-        gap: 12px;
-        min-height: 0;
-      }
-
-      /* ✅ Give the board a real, stable pixel box */
-      #boardWrap {
+      /* ✅ Give the board an explicit, guaranteed square pixel size */
+      #boardStage {
         min-height: 0;
         display: grid;
         place-items: center;
       }
 
       #board {
-        /* Use height-first sizing so it never collapses */
-        height: min(calc(100vh - 220px), 78vh); /* ✅ stable pixel height */
-        width: auto;
-        aspect-ratio: 1 / 1;
+        /* boardSize = min(available viewport height, available viewport width minus sidebar) */
+        width: min(
+          calc(100vw - var(--sidebarW) - (var(--pad) * 2) - var(--gap) - 24px),
+          calc(100vh - (var(--pad) * 2) - 72px)
+        );
+        height: min(
+          calc(100vw - var(--sidebarW) - (var(--pad) * 2) - var(--gap) - 24px),
+          calc(100vh - (var(--pad) * 2) - 72px)
+        );
         max-width: 100%;
         max-height: 100%;
       }
 
-      .controls {
+      /* ---------- RIGHT: CONTROLS (top) + CHAT (bottom) ---------- */
+      .right {
         display: grid;
-        grid-template-columns: 1.1fr 0.9fr; /* board-related controls bigger, eval slightly smaller */
-        gap: 12px;
-        align-items: stretch;
+        grid-template-rows: auto 1fr;
+        gap: var(--gap);
+        min-height: 0;
+      }
+
+      .panelTitle {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 8px;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+      }
+
+      .controlsGrid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
       }
 
       .block {
@@ -122,16 +145,7 @@
         min-height: 0;
       }
 
-      .sectionTitle {
-        font-size: 12px;
-        color: var(--muted);
-        margin-bottom: 8px;
-        letter-spacing: 0.3px;
-        text-transform: uppercase;
-      }
-
       button, input { font: inherit; }
-
       button {
         cursor: pointer;
         border: 1px solid var(--line);
@@ -158,15 +172,16 @@
       .row { display: flex; gap: 8px; }
       .row > * { flex: 1; }
 
+      /* Eval smaller (board is star) */
       .evalWrap {
         display: grid;
-        grid-template-columns: 22px 1fr;
+        grid-template-columns: 18px 1fr;
         gap: 10px;
         align-items: center;
       }
       .evalBar {
-        width: 22px;
-        height: 160px; /* ✅ smaller so board stays dominant */
+        width: 18px;
+        height: 140px;
         border-radius: 999px;
         border: 1px solid var(--line);
         overflow: hidden;
@@ -180,18 +195,18 @@
         height: 50%;
         background: linear-gradient(180deg, rgba(34,197,94,0.9), rgba(34,197,94,0.55));
       }
-      .evalText .big {
-        font-size: 28px;
+      .evalBig {
+        font-size: 26px;
         letter-spacing: 0.2px;
       }
-      .evalText .sub {
+      .evalSub {
         font-size: 12px;
         color: var(--muted);
         line-height: 1.4;
       }
 
-      /* ✅ Right panel: compact chat, internal scroll only */
-      .right {
+      /* Chat */
+      .chatCard {
         display: grid;
         grid-template-rows: auto 1fr auto;
         gap: 10px;
@@ -225,7 +240,6 @@
       }
       .msg .text {
         font-size: 13px;
-        color: var(--text);
         line-height: 1.35;
         word-break: break-word;
       }
@@ -237,18 +251,20 @@
         gap: 8px;
       }
       .chatSend input { flex: 1; }
-      .chatSend button { width: 110px; }
+      .chatSend button { width: 96px; }
 
       .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
 
-      /* ✅ Responsive: stack but still keep board biggest */
-      @media (max-width: 1150px) {
+      @media (max-width: 1050px) {
+        /* Stack on small screens */
         .wrap {
           grid-template-columns: 1fr;
           grid-template-rows: 62vh 1fr;
         }
+        :root { --sidebarW: 100%; }
         #board {
-          height: min(calc(62vh - 120px), 52vh);
+          width: min(calc(100vw - (var(--pad) * 2) - 24px), calc(62vh - 60px));
+          height: min(calc(100vw - (var(--pad) * 2) - 24px), calc(62vh - 60px));
         }
       }
     </style>
@@ -256,12 +272,12 @@
 
   <body>
     <div class="wrap">
-      <!-- LEFT -->
+      <!-- LEFT: BOARD -->
       <div class="card left">
         <div class="topbar">
           <div class="brand">
             <h1>Live Eval Chess</h1>
-            <span class="muted">Online rooms + local Stockfish eval (browser)</span>
+            <span>Online rooms + local Stockfish eval (browser)</span>
           </div>
           <div class="pills">
             <div class="pill" id="modePill">idle</div>
@@ -270,56 +286,60 @@
           </div>
         </div>
 
-        <div id="boardWrap">
+        <div id="boardStage">
           <div id="board"></div>
-        </div>
-
-        <div class="controls">
-          <div class="block">
-            <div class="sectionTitle">Online</div>
-            <div class="row" style="margin-bottom: 8px;">
-              <button class="primary" id="playOnlineBtn">Play Online</button>
-              <button class="danger" id="cancelBtn">Cancel</button>
-            </div>
-            <div class="row">
-              <button id="createBtn">Create Room</button>
-              <button id="copyBtn">Copy Link</button>
-            </div>
-            <div style="height: 10px;"></div>
-            <div class="row">
-              <input id="joinInput" placeholder="ROOM CODE (e.g. 8KJ3QZ)" />
-              <button id="joinBtn">Join</button>
-            </div>
-            <div style="height: 10px;"></div>
-            <button id="restartBtn">Restart (Local Only)</button>
-          </div>
-
-          <div class="block">
-            <div class="sectionTitle">Evaluation</div>
-            <div class="evalWrap">
-              <div class="evalBar" title="Engine eval (white good up, black good down)">
-                <div class="evalFill" id="evalFill"></div>
-              </div>
-              <div class="evalText">
-                <div class="big" id="evalBig">0.0</div>
-                <div class="sub" id="evalSub">
-                  Eval is local (your device). Depth 14. Starts neutral until a move is made.
-                </div>
-              </div>
-            </div>
-            <div style="height: 10px;"></div>
-            <div class="muted">Server authoritative + resync after refresh/disconnect.</div>
-          </div>
         </div>
       </div>
 
-      <!-- RIGHT -->
-      <div class="card right">
-        <div class="sectionTitle">Room Feed</div>
-        <div class="chatLog" id="chatLog"></div>
-        <div class="chatSend">
-          <input id="chatInput" placeholder="Type a message…" />
-          <button id="sendBtn">Send</button>
+      <!-- RIGHT: CONTROLS TOP + CHAT BOTTOM -->
+      <div class="right">
+        <div class="card">
+          <div class="panelTitle">Controls</div>
+          <div class="controlsGrid">
+            <div class="block">
+              <div class="panelTitle" style="margin-bottom:6px;">Online</div>
+              <div class="row" style="margin-bottom: 8px;">
+                <button class="primary" id="playOnlineBtn">Play Online</button>
+                <button class="danger" id="cancelBtn">Cancel</button>
+              </div>
+              <div class="row" style="margin-bottom: 8px;">
+                <button id="createBtn">Create Room</button>
+                <button id="copyBtn">Copy Link</button>
+              </div>
+              <div class="row">
+                <input id="joinInput" placeholder="ROOM CODE (e.g. 8KJ3QZ)" />
+                <button id="joinBtn">Join</button>
+              </div>
+              <div style="height: 10px;"></div>
+              <button id="restartBtn">Restart (Local Only)</button>
+            </div>
+
+            <div class="block">
+              <div class="panelTitle" style="margin-bottom:6px;">Evaluation</div>
+              <div class="evalWrap">
+                <div class="evalBar">
+                  <div class="evalFill" id="evalFill"></div>
+                </div>
+                <div>
+                  <div class="evalBig" id="evalBig">0.0</div>
+                  <div class="evalSub" id="evalSub">
+                    Eval is local. Depth 14. Neutral until first move.
+                  </div>
+                  <div style="height:8px;"></div>
+                  <div class="muted">Server authoritative + resync after refresh/disconnect.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card chatCard">
+          <div class="panelTitle">Room Feed</div>
+          <div class="chatLog" id="chatLog"></div>
+          <div class="chatSend">
+            <input id="chatInput" placeholder="Type a message…" />
+            <button id="sendBtn">Send</button>
+          </div>
         </div>
       </div>
     </div>
@@ -361,16 +381,11 @@
       let mode = "idle";
       let moveNumber = 0;
 
-      function setMode(m) {
-        mode = m;
-        modePill.textContent = m;
-      }
-
+      function setMode(m) { mode = m; modePill.textContent = m; }
       function updateTopPills(players) {
         roomPill.textContent = `room: ${currentRoom || "—"}`;
         playersPill.textContent = `players: ${players ?? 0}`;
       }
-
       function clearSession() {
         currentRoom = null;
         myRole = null;
@@ -397,7 +412,6 @@
         chatLog.appendChild(row);
         chatLog.scrollTop = chatLog.scrollHeight;
       }
-
       function sys(text) { addMsg("sys", "sys", text); }
 
       // Chess + board
@@ -407,16 +421,26 @@
       const board = new Chessboard(boardEl, {
         position: game.fen(),
         responsive: true,
-        style: {
-          cssClass: "default",
-          showCoordinates: true,
-        },
+        style: { cssClass: "default", showCoordinates: true },
       });
 
       function setOrientation() {
         if (myRole === "black") board.setOrientation("black");
         else board.setOrientation("white");
       }
+
+      // ✅ Hard force the board to render after layout and whenever size may change
+      function forceBoardRender() {
+        try { board.setPosition(game.fen()); } catch {}
+      }
+      window.addEventListener("load", () => {
+        requestAnimationFrame(() => {
+          forceBoardRender();
+          setTimeout(forceBoardRender, 50);
+          setTimeout(forceBoardRender, 200);
+        });
+      });
+      window.addEventListener("resize", () => requestAnimationFrame(forceBoardRender));
 
       function setEvalBarFromCp(whiteCp) {
         const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
@@ -431,6 +455,7 @@
         board.setPosition(game.fen());
         setEvalBarFromCp(0);
         requestEval(game.fen());
+        forceBoardRender();
       }
 
       function canMoveNow() {
@@ -439,23 +464,6 @@
         if (myRole === "black") return turn === "b";
         return false;
       }
-
-      // ✅ Force render after layout + on resize (fixes blank board)
-      function forceBoardRender() {
-        try {
-          board.setPosition(game.fen());
-        } catch {}
-      }
-      window.addEventListener("load", () => {
-        requestAnimationFrame(() => {
-          forceBoardRender();
-          // second tick helps on some browsers/layout timings
-          setTimeout(forceBoardRender, 50);
-        });
-      });
-      window.addEventListener("resize", () => {
-        requestAnimationFrame(forceBoardRender);
-      });
 
       // Stockfish (browser worker)
       let sf = null;
@@ -468,10 +476,7 @@
           const line = (e.data || "").toString();
           if (!line) return;
 
-          if (line === "uciok") {
-            sfReady = true;
-            return;
-          }
+          if (line === "uciok") { sfReady = true; return; }
 
           if (line.includes("score cp")) {
             const m = line.match(/score cp (-?\d+)/);
@@ -514,13 +519,12 @@
         }
 
         evalBig.textContent = (whiteCp / 100).toFixed(1);
-        evalSub.textContent = "cp (centipawns) — white good up, black good down";
+        evalSub.textContent = "cp — white good up, black good down";
         setEvalBarFromCp(whiteCp);
       }
 
       // Socket
       const socket = io();
-
       socket.on("connect", () => sys("socket connected"));
 
       socket.on("queue:status", ({ state }) => {
@@ -548,7 +552,6 @@
         history.replaceState({}, "", u);
 
         sys(`match found: ${room} (${myRole})`);
-        forceBoardRender();
       });
 
       socket.on("room:created", ({ room }) => {
@@ -565,7 +568,6 @@
         history.replaceState({}, "", u);
 
         sys(`room created: ${room}`);
-        forceBoardRender();
       });
 
       socket.on("room:joined", ({ room, role, players }) => {
@@ -582,7 +584,6 @@
         history.replaceState({}, "", u);
 
         sys(`joined: ${room} (${myRole})`);
-        forceBoardRender();
       });
 
       socket.on("room:update", ({ room, players }) => {
@@ -650,9 +651,7 @@
         if (mode !== "matched") return false;
         if (!(myRole === "white" || myRole === "black")) return false;
 
-        if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
-          return canMoveNow();
-        }
+        if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return canMoveNow();
 
         if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
           if (!canMoveNow()) {
@@ -664,7 +663,6 @@
           const from = event.squareFrom;
           const to = event.squareTo;
 
-          // optimistic apply (keeps feel)
           const mv = game.move({ from, to, promotion: "q" });
           if (!mv) {
             sys("illegal move");
@@ -716,10 +714,7 @@
         socket.emit("room:join", { room: code });
       };
 
-      restartBtn.onclick = () => {
-        resetLocalGame();
-        sys("restarted (local)");
-      };
+      restartBtn.onclick = () => { resetLocalGame(); sys("restarted (local)"); };
 
       copyBtn.onclick = async () => {
         const u = new URL(location.href);
@@ -737,9 +732,7 @@
       }
 
       sendBtn.onclick = sendChat;
-      chatInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") sendChat();
-      });
+      chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
 
       // auto-join from URL
       const roomParam = new URL(location.href).searchParams.get("room");
