@@ -29,21 +29,28 @@
           var(--bg);
         color: var(--text);
       }
+
+      /* ✅ keep everything visible: lock layout to viewport height */
       .wrap {
         max-width: 1100px;
         margin: 0 auto;
         padding: 24px;
+        height: 100vh;
         display: grid;
         grid-template-columns: 1fr 340px;
         gap: 18px;
+        align-content: stretch;
       }
-      @media (max-width: 980px) { .wrap { grid-template-columns: 1fr; } }
+      @media (max-width: 980px) {
+        .wrap { height: auto; grid-template-columns: 1fr; }
+      }
 
       .card {
         background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
         border: 1px solid var(--border);
         border-radius: var(--radius);
         box-shadow: var(--shadow);
+        min-height: 0; /* critical for nested scrolling */
       }
       .header {
         padding: 14px 16px;
@@ -83,12 +90,12 @@
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05), 0 0 18px rgba(124,92,255,0.18);
       }
       .evalFillWhite {
-        position: absolute; bottom: 50%; left: 0; right: 0;
+        position: absolute; bottom: 50%; left: 0;
         height: 50%;
         background: linear-gradient(180deg, rgba(219,227,238,0.95), rgba(219,227,238,0.55));
       }
       .evalFillBlack {
-        position: absolute; top: 50%; left: 0; right: 0;
+        position: absolute; top: 50%; right: 0;
         height: 50%;
         background: linear-gradient(180deg, rgba(10,12,14,0.95), rgba(10,12,14,0.55));
       }
@@ -106,7 +113,14 @@
         margin: 0 auto;
       }
 
-      .rightCol { display: grid; grid-template-rows: auto auto 1fr; gap: 12px; }
+      /* ✅ right column stays on screen; feed scrolls internally */
+      .rightCol {
+        display: grid;
+        grid-template-rows: auto 1fr; /* Controls + Chat takes remaining height */
+        gap: 12px;
+        min-height: 0; /* critical */
+      }
+
       .panelBody { padding: 12px 14px; }
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
@@ -147,12 +161,19 @@
       .modeLine { margin-top: 10px; font-size: 12px; color: var(--muted); }
       .modeLine strong { color: var(--text); }
 
+      .chatCard {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        min-height: 0; /* critical */
+      }
+
       .feed {
-        height: 340px;
+        min-height: 0; /* critical */
         overflow: auto;
         padding: 10px 12px;
         border-top: 1px solid var(--border);
       }
+
       .msg {
         margin: 0 0 10px 0;
         padding: 10px 10px;
@@ -247,7 +268,7 @@
           </div>
         </div>
 
-        <div class="card" style="display:grid;grid-template-rows:auto 1fr auto">
+        <div class="card chatCard">
           <div class="header">
             <div class="title">Feed / Chat</div>
             <div class="pillRow"><div class="pill">log</div></div>
@@ -371,10 +392,15 @@
         board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
       }
 
+      function shouldShowEval() {
+        return game.history().length > 0;
+      }
+
       function resetLocalGame() {
         game.reset();
         board.setPosition(game.fen());
-        requestEval(game.fen());
+        setEvalBarFromCp(0);          // ✅ start at 0.0
+        requestEval(game.fen());      // still warms engine, but UI stays 0 until first move
       }
 
       function canMoveNow() {
@@ -398,6 +424,7 @@
         const whitePct = 50 + c / 12;
         const w = clamp(whitePct, 0, 100);
         const b = 100 - w;
+
         evalWhiteFill.style.width = `${w}%`;
         evalBlackFill.style.width = `${b}%`;
         evalNumEl.textContent = label ? label : fmtEval(cp);
@@ -435,6 +462,9 @@
           if (!accepting) return;
 
           if (line.startsWith("info") && line.includes("score")) {
+            // ✅ don’t show eval until first move
+            if (!shouldShowEval()) return;
+
             const mMate = line.match(/score mate (-?\d+)/);
             if (mMate) {
               const mateN = parseInt(mMate[1], 10);
@@ -445,7 +475,6 @@
             const mCp = line.match(/score cp (-?\d+)/);
             if (mCp) {
               const cp = parseInt(mCp[1], 10);
-              // show eval in White POV
               const whitePov = game.turn() === "w" ? cp : -cp;
               setEvalBarFromCp(whitePov);
             }
