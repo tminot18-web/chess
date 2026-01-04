@@ -141,6 +141,10 @@
         border-color: rgba(255,77,77,0.45);
         background: rgba(255,77,77,0.12);
       }
+      button.neutral {
+        border-color: rgba(219,227,238,0.18);
+        background: rgba(255,255,255,0.03);
+      }
       button:disabled { opacity: 0.45; cursor: not-allowed; }
 
       input[type="text"] {
@@ -240,7 +244,7 @@
 
     <script src="/socket.io/socket.io.js"></script>
 
-    <!-- ✅ Use the UMD that defines window.Chess (no ESM export token explosions) -->
+    <!-- ✅ Use the UMD that defines window.Chess -->
     <script src="https://cdn.jsdelivr.net/npm/chess.js@0.10.3/chess.min.js"></script>
   </head>
 
@@ -278,7 +282,11 @@
             <div class="row">
               <button id="playOnlineBtn" class="primary">Play Online</button>
               <button id="cancelBtn" class="danger" disabled>Cancel</button>
-              <button id="restartBtn" disabled>Restart</button>
+
+              <!-- ✅ replace Restart with Draw + Resign -->
+              <button id="drawBtn" class="neutral" disabled>Draw</button>
+              <button id="resignBtn" class="danger" disabled>Resign</button>
+
               <button id="copyBtn" disabled>Copy Link</button>
             </div>
 
@@ -327,7 +335,6 @@
     </div>
 
     <script type="module">
-      // ✅ v8.7.8 ESM import
       import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
 
       // ---------- DOM ----------
@@ -343,8 +350,10 @@
 
       const playOnlineBtn = document.getElementById("playOnlineBtn");
       const cancelBtn = document.getElementById("cancelBtn");
-      const restartBtn = document.getElementById("restartBtn");
       const copyBtn = document.getElementById("copyBtn");
+
+      const drawBtn = document.getElementById("drawBtn");
+      const resignBtn = document.getElementById("resignBtn");
 
       const createBtn = document.getElementById("createBtn");
       const joinBtn = document.getElementById("joinBtn");
@@ -392,14 +401,26 @@
       let myRole = null; // "white" | "black"
       let mode = "idle"; // idle | searching | matched
       let moveNumber = 0;
+      let gameOver = false;
+
+      // draw offer tracking
+      let outgoingDrawPending = false;
 
       function setMode(next) {
         mode = next;
         modeTextEl.textContent = mode;
+
         const searching = mode === "searching";
+        const matched = mode === "matched";
+
         playOnlineBtn.disabled = searching;
         cancelBtn.disabled = !searching;
-        restartBtn.disabled = !(mode === "matched");
+
+        // enable/disable draw+resign only when in a matched game and not over
+        drawBtn.disabled = !(matched && !gameOver);
+        resignBtn.disabled = !(matched && !gameOver);
+
+        copyBtn.disabled = !currentRoom;
       }
 
       function updateTopPills(players = null) {
@@ -412,16 +433,27 @@
       function clearSession() {
         currentRoom = null;
         myRole = null;
+        gameOver = false;
+        outgoingDrawPending = false;
+
         const u = new URL(location.href);
         u.searchParams.delete("room");
         history.replaceState({}, "", u);
+
         updateTopPills(0);
+        setMode("idle");
+      }
+
+      function endGameLocal(reason) {
+        if (gameOver) return;
+        gameOver = true;
+        sys(reason);
+        setMode(mode); // refresh button states
       }
 
       // ---------- Board ----------
       const boardEl = document.getElementById("board");
 
-      // ✅ Assets + CSS are both v8.7.8 from unpkg — no more local /cm-assets mismatch
       const board = new Chessboard(boardEl, {
         assetsUrl: "https://unpkg.com/cm-chessboard@8.7.8/assets/",
         position: FEN.start,
@@ -430,7 +462,6 @@
       });
       board.setPosition(FEN.start);
 
-      // chess.js global
       const game = new window.Chess();
 
       function setOrientation() {
@@ -451,7 +482,6 @@
       function setEvalFromCp(cp, label = null) {
         evalNumEl.textContent = label ? label : fmtEval(cp);
 
-        // map [-600..600] to [0..100] for fill width (center=50)
         const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
         const c = clamp(cp, -600, 600);
         const pct = clamp(50 + c / 12, 0, 100);
@@ -462,12 +492,16 @@
       function resetLocalGame() {
         game.reset();
         moveNumber = 0;
+        gameOver = false;
+        outgoingDrawPending = false;
         board.setPosition(game.fen());
         setEvalFromCp(0);
         requestEval(game.fen());
+        setMode(mode);
       }
 
       function canMoveNow() {
+        if (gameOver) return false;
         const turn = game.turn();
         if (myRole === "white") return turn === "w";
         if (myRole === "black") return turn === "b";
@@ -574,6 +608,9 @@
       socket.on("match:found", ({ room, role }) => {
         currentRoom = room;
         myRole = role === "w" ? "white" : "black";
+        gameOver = false;
+        outgoingDrawPending = false;
+
         setMode("matched");
         updateTopPills(2);
         setOrientation();
@@ -590,6 +627,9 @@
       socket.on("room:created", ({ room }) => {
         currentRoom = room;
         myRole = "white";
+        gameOver = false;
+        outgoingDrawPending = false;
+
         setMode("matched");
         updateTopPills(1);
         setOrientation();
@@ -606,6 +646,9 @@
       socket.on("room:joined", ({ room, role, players }) => {
         currentRoom = room;
         myRole = role === "w" ? "white" : "black";
+        gameOver = false;
+        outgoingDrawPending = false;
+
         setMode("matched");
         updateTopPills(players ?? null);
         setOrientation();
@@ -624,7 +667,9 @@
       });
 
       socket.on("room:error", ({ error }) => sys("room error: " + error));
-      socket.on("opponent:left", () => sys("opponent left"));
+      socket.on("opponent:left", () => {
+        sys("opponent left");
+      });
 
       socket.on("state:sync", (s) => {
         try {
@@ -675,11 +720,84 @@
         }
       });
 
+      // -----------------------------
+      // ✅ Draw + Resign protocol (client side)
+      // -----------------------------
+
+      // Incoming draw offer from opponent
+      socket.on("draw:offer", (payload = {}) => {
+        if (!currentRoom) return;
+        if (payload.room && payload.room !== currentRoom) return;
+        if (gameOver) return;
+
+        sys("draw offer received");
+
+        // Simple UX: confirm dialog. Replace with custom modal later.
+        const accept = window.confirm("Opponent offered a draw. Accept?");
+        socket.emit("draw:response", { room: currentRoom, accept });
+
+        if (accept) {
+          endGameLocal("draw agreed");
+        } else {
+          sys("draw declined");
+        }
+      });
+
+      // Response to our draw offer (if server forwards it)
+      socket.on("draw:response", (payload = {}) => {
+        if (!currentRoom) return;
+        if (payload.room && payload.room !== currentRoom) return;
+
+        const accept = !!payload.accept;
+        outgoingDrawPending = false;
+        drawBtn.disabled = !(mode === "matched" && !gameOver);
+
+        if (accept) {
+          endGameLocal("draw agreed");
+        } else {
+          sys("draw declined");
+        }
+      });
+
+      // If server chooses to broadcast a final draw event instead
+      socket.on("draw:accepted", (payload = {}) => {
+        if (!currentRoom) return;
+        if (payload.room && payload.room !== currentRoom) return;
+        outgoingDrawPending = false;
+        endGameLocal("draw agreed");
+      });
+
+      socket.on("draw:declined", (payload = {}) => {
+        if (!currentRoom) return;
+        if (payload.room && payload.room !== currentRoom) return;
+        outgoingDrawPending = false;
+        sys("draw declined");
+        drawBtn.disabled = !(mode === "matched" && !gameOver);
+      });
+
+      // If server broadcasts resign info
+      socket.on("game:resigned", (payload = {}) => {
+        if (!currentRoom) return;
+        if (payload.room && payload.room !== currentRoom) return;
+
+        // payload.by could be "white"/"black" or socket id
+        const by = payload.by ? String(payload.by) : "a player";
+        endGameLocal(`${by} resigned`);
+      });
+
+      socket.on("game:ended", (payload = {}) => {
+        if (!currentRoom) return;
+        if (payload.room && payload.room !== currentRoom) return;
+        const reason = payload.reason ? String(payload.reason) : "game ended";
+        endGameLocal(reason);
+      });
+
       // Move input
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
         if (!(myRole === "white" || myRole === "black")) return false;
+        if (gameOver) return false;
 
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return canMoveNow();
 
@@ -744,17 +862,34 @@
         socket.emit("room:join", { room: code });
       };
 
-      restartBtn.onclick = () => {
-        resetLocalGame();
-        sys("restarted (local)");
-      };
-
       copyBtn.onclick = async () => {
         const u = new URL(location.href);
         if (currentRoom) u.searchParams.set("room", currentRoom);
         history.replaceState({}, "", u);
         await navigator.clipboard.writeText(u.toString());
         sys("room link copied");
+      };
+
+      // ✅ Draw button: offer draw
+      drawBtn.onclick = () => {
+        if (!currentRoom || mode !== "matched" || gameOver) return;
+        if (outgoingDrawPending) return;
+
+        outgoingDrawPending = true;
+        drawBtn.disabled = true;
+        sys("draw offer sent");
+        socket.emit("draw:offer", { room: currentRoom });
+      };
+
+      // ✅ Resign button: resign immediately
+      resignBtn.onclick = () => {
+        if (!currentRoom || mode !== "matched" || gameOver) return;
+
+        const ok = window.confirm("Resign this game?");
+        if (!ok) return;
+
+        socket.emit("game:resign", { room: currentRoom });
+        endGameLocal("you resigned");
       };
 
       function sendChat() {
