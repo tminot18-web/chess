@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess — Online</title>
 
+    <!-- ✅ cm-chessboard CSS (v8, works with ESM import below) -->
     <link
       rel="stylesheet"
-      href="https://unpkg.com/cm-chessboard@3.15.5/styles/cm-chessboard.css"
+      href="https://cdn.jsdelivr.net/npm/cm-chessboard@8/styles/cm-chessboard.css"
     />
 
     <style>
@@ -17,8 +18,8 @@
         --muted: #a7b4cf;
         --line: rgba(255, 255, 255, 0.08);
 
-        /* ✅ Sidebar (chat+controls) width target */
-        --sidebarW: 340px;
+        /* ✅ “halve chat space” — slim sidebar */
+        --sidebarW: 320px;
         --gap: 14px;
         --pad: 14px;
       }
@@ -28,7 +29,7 @@
       html, body {
         height: 100%;
         margin: 0;
-        overflow: hidden; /* ✅ no page scrolling */
+        overflow: hidden; /* ✅ no page scroll */
       }
 
       body {
@@ -40,7 +41,7 @@
         color: var(--text);
       }
 
-      /* ✅ Layout: board dominates, sidebar is slim (about half of what you had) */
+      /* ✅ Big board left, slim right */
       .wrap {
         height: 100vh;
         display: grid;
@@ -59,7 +60,7 @@
         min-height: 0;
       }
 
-      /* ---------- LEFT: BOARD (fills the freed space) ---------- */
+      /* ---------- LEFT: BOARD FILLS SPACE ---------- */
       .left {
         display: grid;
         grid-template-rows: auto 1fr;
@@ -79,6 +80,7 @@
         margin: 0;
         letter-spacing: 0.2px;
       }
+
       .brand span {
         font-size: 12px;
         color: var(--muted);
@@ -94,15 +96,14 @@
         background: rgba(0,0,0,0.12);
       }
 
-      /* ✅ Give the board an explicit, guaranteed square pixel size */
       #boardStage {
         min-height: 0;
         display: grid;
         place-items: center;
       }
 
+      /* ✅ Guaranteed square pixel size so the board *always* paints */
       #board {
-        /* boardSize = min(available viewport height, available viewport width minus sidebar) */
         width: min(
           calc(100vw - var(--sidebarW) - (var(--pad) * 2) - var(--gap) - 24px),
           calc(100vh - (var(--pad) * 2) - 72px)
@@ -115,7 +116,7 @@
         max-height: 100%;
       }
 
-      /* ---------- RIGHT: CONTROLS (top) + CHAT (bottom) ---------- */
+      /* ---------- RIGHT: CONTROLS TOP-RIGHT + CHAT BELOW ---------- */
       .right {
         display: grid;
         grid-template-rows: auto 1fr;
@@ -129,12 +130,6 @@
         margin-bottom: 8px;
         letter-spacing: 0.3px;
         text-transform: uppercase;
-      }
-
-      .controlsGrid {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 10px;
       }
 
       .block {
@@ -172,7 +167,7 @@
       .row { display: flex; gap: 8px; }
       .row > * { flex: 1; }
 
-      /* Eval smaller (board is star) */
+      /* Eval: compact */
       .evalWrap {
         display: grid;
         grid-template-columns: 18px 1fr;
@@ -181,7 +176,7 @@
       }
       .evalBar {
         width: 18px;
-        height: 140px;
+        height: 120px;
         border-radius: 999px;
         border: 1px solid var(--line);
         overflow: hidden;
@@ -195,15 +190,9 @@
         height: 50%;
         background: linear-gradient(180deg, rgba(34,197,94,0.9), rgba(34,197,94,0.55));
       }
-      .evalBig {
-        font-size: 26px;
-        letter-spacing: 0.2px;
-      }
-      .evalSub {
-        font-size: 12px;
-        color: var(--muted);
-        line-height: 1.4;
-      }
+      .evalBig { font-size: 26px; letter-spacing: 0.2px; }
+      .evalSub { font-size: 12px; color: var(--muted); line-height: 1.4; }
+      .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
 
       /* Chat */
       .chatCard {
@@ -212,7 +201,6 @@
         gap: 10px;
         min-height: 0;
       }
-
       .chatLog {
         border: 1px solid var(--line);
         border-radius: 12px;
@@ -221,7 +209,6 @@
         overflow-y: auto;
         min-height: 0;
       }
-
       .msg {
         display: grid;
         grid-template-columns: auto 1fr;
@@ -238,29 +225,16 @@
         color: var(--muted);
         height: fit-content;
       }
-      .msg .text {
-        font-size: 13px;
-        line-height: 1.35;
-        word-break: break-word;
-      }
+      .msg .text { font-size: 13px; line-height: 1.35; word-break: break-word; }
       .tag.sys { border-color: rgba(125,211,252,0.35); color: rgba(125,211,252,0.95); }
       .tag.user { border-color: rgba(255,255,255,0.12); color: var(--text); }
 
-      .chatSend {
-        display: flex;
-        gap: 8px;
-      }
+      .chatSend { display: flex; gap: 8px; }
       .chatSend input { flex: 1; }
-      .chatSend button { width: 96px; }
-
-      .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
+      .chatSend button { width: 90px; }
 
       @media (max-width: 1050px) {
-        /* Stack on small screens */
-        .wrap {
-          grid-template-columns: 1fr;
-          grid-template-rows: 62vh 1fr;
-        }
+        .wrap { grid-template-columns: 1fr; grid-template-rows: 62vh 1fr; }
         :root { --sidebarW: 100%; }
         #board {
           width: min(calc(100vw - (var(--pad) * 2) - 24px), calc(62vh - 60px));
@@ -291,43 +265,42 @@
         </div>
       </div>
 
-      <!-- RIGHT: CONTROLS TOP + CHAT BOTTOM -->
+      <!-- RIGHT: CONTROLS TOP-RIGHT + CHAT BELOW -->
       <div class="right">
         <div class="card">
           <div class="panelTitle">Controls</div>
-          <div class="controlsGrid">
-            <div class="block">
-              <div class="panelTitle" style="margin-bottom:6px;">Online</div>
-              <div class="row" style="margin-bottom: 8px;">
-                <button class="primary" id="playOnlineBtn">Play Online</button>
-                <button class="danger" id="cancelBtn">Cancel</button>
-              </div>
-              <div class="row" style="margin-bottom: 8px;">
-                <button id="createBtn">Create Room</button>
-                <button id="copyBtn">Copy Link</button>
-              </div>
-              <div class="row">
-                <input id="joinInput" placeholder="ROOM CODE (e.g. 8KJ3QZ)" />
-                <button id="joinBtn">Join</button>
-              </div>
-              <div style="height: 10px;"></div>
-              <button id="restartBtn">Restart (Local Only)</button>
-            </div>
 
-            <div class="block">
-              <div class="panelTitle" style="margin-bottom:6px;">Evaluation</div>
-              <div class="evalWrap">
-                <div class="evalBar">
-                  <div class="evalFill" id="evalFill"></div>
+          <div class="block" style="margin-bottom:10px;">
+            <div class="panelTitle" style="margin-bottom:6px;">Online</div>
+            <div class="row" style="margin-bottom: 8px;">
+              <button class="primary" id="playOnlineBtn">Play Online</button>
+              <button class="danger" id="cancelBtn">Cancel</button>
+            </div>
+            <div class="row" style="margin-bottom: 8px;">
+              <button id="createBtn">Create Room</button>
+              <button id="copyBtn">Copy Link</button>
+            </div>
+            <div class="row">
+              <input id="joinInput" placeholder="ROOM CODE (e.g. 8KJ3QZ)" />
+              <button id="joinBtn">Join</button>
+            </div>
+            <div style="height: 10px;"></div>
+            <button id="restartBtn">Restart (Local Only)</button>
+          </div>
+
+          <div class="block">
+            <div class="panelTitle" style="margin-bottom:6px;">Evaluation</div>
+            <div class="evalWrap">
+              <div class="evalBar">
+                <div class="evalFill" id="evalFill"></div>
+              </div>
+              <div>
+                <div class="evalBig" id="evalBig">0.0</div>
+                <div class="evalSub" id="evalSub">
+                  Eval is local. Depth 14. Neutral until first move.
                 </div>
-                <div>
-                  <div class="evalBig" id="evalBig">0.0</div>
-                  <div class="evalSub" id="evalSub">
-                    Eval is local. Depth 14. Neutral until first move.
-                  </div>
-                  <div style="height:8px;"></div>
-                  <div class="muted">Server authoritative + resync after refresh/disconnect.</div>
-                </div>
+                <div style="height:8px;"></div>
+                <div class="muted">Server authoritative + resync after refresh/disconnect.</div>
               </div>
             </div>
           </div>
@@ -344,15 +317,13 @@
       </div>
     </div>
 
-    <!-- deps -->
+    <!-- socket.io is still classic script (fine) -->
     <script src="/socket.io/socket.io.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.13.4/chess.min.js"></script>
-    <script src="https://unpkg.com/cm-chessboard@3.15.5/cm-chessboard.js"></script>
 
-    <script>
-      // cm-chessboard v3 global
-      const { Chessboard, INPUT_EVENT_TYPE } = window.cmChessboard;
-      const { Chess } = window;
+    <!-- ✅ Everything else now runs as an ES module -->
+    <script type="module">
+      import { Chessboard, INPUT_EVENT_TYPE } from "https://cdn.jsdelivr.net/npm/cm-chessboard@8/src/Chessboard.js";
+      import { Chess } from "https://cdn.jsdelivr.net/npm/chess.js@1.0.0/dist/esm/chess.js";
 
       // DOM
       const modePill = document.getElementById("modePill");
@@ -420,8 +391,7 @@
 
       const board = new Chessboard(boardEl, {
         position: game.fen(),
-        responsive: true,
-        style: { cssClass: "default", showCoordinates: true },
+        style: { showCoordinates: true }
       });
 
       function setOrientation() {
@@ -429,10 +399,10 @@
         else board.setOrientation("white");
       }
 
-      // ✅ Hard force the board to render after layout and whenever size may change
       function forceBoardRender() {
         try { board.setPosition(game.fen()); } catch {}
       }
+
       window.addEventListener("load", () => {
         requestAnimationFrame(() => {
           forceBoardRender();
