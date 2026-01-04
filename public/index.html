@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess — Online</title>
 
-    <!-- cm-chessboard CSS (v8) -->
+    <!-- ✅ Correct v8 CSS location (this is the big fix) -->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/cm-chessboard@8/styles/cm-chessboard.css"
+      href="https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/styles/cm-chessboard.css"
     />
 
     <style>
@@ -91,6 +91,7 @@
         place-items: center;
       }
 
+      /* ✅ Keep board big + square */
       #board {
         width: min(
           calc(100vw - var(--sidebarW) - (var(--pad) * 2) - var(--gap) - 24px),
@@ -246,7 +247,8 @@
         </div>
 
         <div id="boardStage">
-          <div id="board"></div>
+          <!-- ✅ add cm-chessboard class so CSS hits -->
+          <div id="board" class="cm-chessboard"></div>
         </div>
       </div>
 
@@ -307,10 +309,8 @@
       import { Chessboard, INPUT_EVENT_TYPE } from "https://cdn.jsdelivr.net/npm/cm-chessboard@8/src/Chessboard.js";
       import { Chess } from "https://cdn.jsdelivr.net/npm/chess.js@1.0.0/dist/esm/chess.js";
 
-      // ✅ This fixes your 404: it tells cm-chessboard where its SVG pieces live
       const ASSETS_URL = "https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/";
 
-      // DOM
       const modePill = document.getElementById("modePill");
       const roomPill = document.getElementById("roomPill");
       const playersPill = document.getElementById("playersPill");
@@ -331,7 +331,6 @@
       const chatInput = document.getElementById("chatInput");
       const sendBtn = document.getElementById("sendBtn");
 
-      // State
       let currentRoom = null;
       let myRole = null; // "white" | "black"
       let mode = "idle";
@@ -370,13 +369,12 @@
       }
       function sys(text) { addMsg("sys", "sys", text); }
 
-      // Chess + board
       const game = new Chess();
       const boardEl = document.getElementById("board");
 
       const board = new Chessboard(boardEl, {
         position: game.fen(),
-        assetsUrl: ASSETS_URL, // ✅ THE FIX
+        assetsUrl: ASSETS_URL,
         style: { showCoordinates: true },
       });
 
@@ -420,7 +418,6 @@
         return false;
       }
 
-      // Stockfish worker
       let sf = null;
       let sfReady = false;
 
@@ -478,7 +475,6 @@
         setEvalBarFromCp(whiteCp);
       }
 
-      // Socket
       const socket = io();
       socket.on("connect", () => sys("socket connected"));
 
@@ -600,7 +596,6 @@
         }
       });
 
-      // Move input
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
@@ -640,7 +635,6 @@
         return true;
       });
 
-      // Buttons
       playOnlineBtn.onclick = () => {
         sys("Play Online clicked");
         clearSession();
