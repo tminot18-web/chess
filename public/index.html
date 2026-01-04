@@ -310,14 +310,10 @@
     <!-- ✅ cm-chessboard v7 UMD -->
     <script src="https://cdn.jsdelivr.net/npm/cm-chessboard@7.11.0/cm-chessboard.min.js"></script>
 
-    <!-- ✅ chess.js UMD (no “export” token problems) -->
-    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.13.4/chess.min.js"></script>
+    <!-- ✅ chess.js UMD that defines window.Chess (NO export tokens) -->
+    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.10.3/chess.min.js"></script>
 
     <script>
-      // Globals from UMD builds:
-      // - window.Chessboard, window.INPUT_EVENT_TYPE (cm-chessboard)
-      // - window.Chess (chess.js)
-
       const modePill = document.getElementById("modePill");
       const roomPill = document.getElementById("roomPill");
       const playersPill = document.getElementById("playersPill");
@@ -376,16 +372,14 @@
       }
       function sys(text) { addMsg("sys", "sys", text); }
 
-      // Chess + board (v7 stable)
+      // chess.js UMD defines window.Chess
       const game = new Chess();
       const boardEl = document.getElementById("board");
 
+      // cm-chessboard v7 defines window.Chessboard + window.INPUT_EVENT_TYPE
       const board = new Chessboard(boardEl, {
         position: game.fen(),
-        style: {
-          cssClass: "default",
-          showCoordinates: true
-        }
+        style: { cssClass: "default", showCoordinates: true }
       });
 
       function setOrientation() {
@@ -421,7 +415,7 @@
         return false;
       }
 
-      // Stockfish (browser worker)
+      // Stockfish worker
       let sf = null;
       let sfReady = false;
 
