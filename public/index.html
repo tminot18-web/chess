@@ -11,7 +11,6 @@
     <style>
       :root {
         --bg: #0b0f14;
-        --panel: #0f1520;
         --text: #dbe3ee;
         --muted: rgba(219, 227, 238, 0.7);
         --border: rgba(219, 227, 238, 0.12);
@@ -55,7 +54,7 @@
         gap: 10px;
       }
       .title { font-size: 16px; font-weight: 800; letter-spacing: 0.3px; }
-      .pillRow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+      .pillRow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
       .pill {
         font-size: 12px;
         padding: 6px 10px;
@@ -73,6 +72,7 @@
         padding: 14px;
         align-items: stretch;
       }
+
       .evalBar {
         width: 14px;
         border-radius: 999px;
@@ -83,27 +83,22 @@
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05), 0 0 18px rgba(124,92,255,0.18);
       }
       .evalFillWhite {
-        position: absolute;
-        bottom: 50%;
-        left: 0; right: 0;
+        position: absolute; bottom: 50%; left: 0; right: 0;
         height: 50%;
         background: linear-gradient(180deg, rgba(219,227,238,0.95), rgba(219,227,238,0.55));
       }
       .evalFillBlack {
-        position: absolute;
-        top: 50%;
-        left: 0; right: 0;
+        position: absolute; top: 50%; left: 0; right: 0;
         height: 50%;
         background: linear-gradient(180deg, rgba(10,12,14,0.95), rgba(10,12,14,0.55));
       }
       .evalMarker {
-        position: absolute;
-        left: 0; right: 0;
-        height: 2px;
-        top: calc(50% - 1px);
+        position: absolute; left: 0; right: 0;
+        height: 2px; top: calc(50% - 1px);
         background: rgba(124,92,255,0.8);
         filter: drop-shadow(0 0 8px rgba(124,92,255,0.9));
       }
+
       #board {
         width: 100%;
         max-width: 640px;
@@ -114,6 +109,7 @@
       .rightCol { display: grid; grid-template-rows: auto auto 1fr; gap: 12px; }
       .panelBody { padding: 12px 14px; }
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
       button, input { font: inherit; }
       button {
         border: 1px solid var(--border);
@@ -132,6 +128,7 @@
         background: rgba(255,77,77,0.12);
       }
       button:disabled { opacity: 0.45; cursor: not-allowed; }
+
       input[type="text"] {
         flex: 1;
         min-width: 160px;
@@ -166,7 +163,6 @@
       .msg .meta {
         display: flex;
         gap: 8px;
-        align-items: baseline;
         margin-bottom: 6px;
         color: rgba(219,227,238,0.75);
         font-size: 11px;
@@ -181,6 +177,7 @@
       .tag.user { border-color: rgba(40,209,124,0.25); }
       .tag.err { border-color: rgba(255,77,77,0.35); }
       .msg .text { white-space: pre-wrap; font-size: 13px; line-height: 1.35; }
+
       .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
     </style>
 
@@ -274,6 +271,7 @@
       const roomEl = document.getElementById("roomPill");
       const roleEl = document.getElementById("rolePill");
       const playersEl = document.getElementById("playersPill");
+
       const evalNumEl = document.getElementById("evalNum");
       const evalWhiteFill = document.getElementById("evalWhiteFill");
       const evalBlackFill = document.getElementById("evalBlackFill");
@@ -319,13 +317,10 @@
       const sys = (t) => addMsg("sys", ts(), t);
       const err = (t) => addMsg("err", "error", t);
 
-      // Log hard failures into the feed so you never have “nothing happens”
-      window.addEventListener("error", (e) => {
-        err(e?.message || String(e));
-      });
-      window.addEventListener("unhandledrejection", (e) => {
-        err("unhandledrejection: " + (e?.reason?.message || String(e.reason)));
-      });
+      window.addEventListener("error", (e) => err(e?.message || String(e)));
+      window.addEventListener("unhandledrejection", (e) =>
+        err("unhandledrejection: " + (e?.reason?.message || String(e.reason)))
+      );
 
       sys("booted");
 
@@ -360,16 +355,20 @@
         updateTopPills(0);
       }
 
-      // ---------- Board (FIX: explicit sprite URL so pieces render) ----------
+      // ---------- Board (FIX: assetsUrl + sprite + forced setPosition) ----------
       const boardEl = document.getElementById("board");
+
       const board = new Chessboard(boardEl, {
+        assetsUrl: "/cm-assets/", // ✅ makes cm-chessboard resolve assets correctly
         position: FEN.start,
         orientation: COLOR.white,
         style: { borderType: "thin" },
-        sprite: { url: "/cm-assets/pieces/staunty.svg" }, // ✅ THIS is the missing piece fix
+        sprite: { url: "/cm-assets/pieces/staunty.svg" }, // ✅ explicit piece sprite
       });
 
-      // chess.js global
+      // Force position set after init (kills the “grid only” failure mode)
+      board.setPosition(FEN.start);
+
       const game = new Chess();
 
       function setOrientation() {
@@ -398,50 +397,58 @@
 
       function setEvalBarFromCp(cp, opts = {}) {
         const label = typeof opts.label === "string" ? opts.label : null;
-
         const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
         const c = clamp(cp, -600, 600);
         const whitePct = 50 + c / 12;
         const w = clamp(whitePct, 0, 100);
         const b = 100 - w;
-
         evalWhiteFill.style.width = `${w}%`;
         evalBlackFill.style.width = `${b}%`;
-
-        if (label) evalNumEl.textContent = label;
-        else evalNumEl.textContent = fmtEval(cp);
+        evalNumEl.textContent = label ? label : fmtEval(cp);
       }
 
       setEvalBarFromCp(0);
 
-      // ---------- Stockfish worker ----------
+      // ---------- Stockfish (FIX: Blob worker to bypass cross-origin Worker restrictions) ----------
       let sf = null;
       let evalJob = 0;
-      let currentEvalAccepting = false;
+      let accepting = false;
 
-      function initStockfish() {
-        const url = "https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish.js";
+      async function createWorkerFromRemoteScript(remoteUrl) {
+        // Fetch JS text, wrap in Blob -> same-origin worker
+        const res = await fetch(remoteUrl, { cache: "force-cache" });
+        if (!res.ok) throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
+        const code = await res.text();
+        const blob = new Blob([code], { type: "application/javascript" });
+        const blobUrl = URL.createObjectURL(blob);
+        return new Worker(blobUrl);
+      }
+
+      async function initStockfish() {
+        engineStatusEl.textContent = "starting…";
+        const remote = "https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish.js";
+
         try {
-          sf = new Worker(url);
+          sf = await createWorkerFromRemoteScript(remote);
         } catch (e) {
-          engineStatusEl.textContent = "engine: error";
-          err("Stockfish Worker failed to construct: " + (e?.message || e));
+          engineStatusEl.textContent = "error";
+          err("Stockfish failed to start: " + (e?.message || e));
           return;
         }
 
-        engineStatusEl.textContent = "engine: starting…";
         sf.onmessage = (e) => {
           const line = (e.data || "").toString();
 
           if (line === "uciok") sf.postMessage("isready");
           if (line === "readyok") {
             engineReady = true;
-            engineStatusEl.textContent = "engine: ready";
+            engineStatusEl.textContent = "ready";
             requestEval(game.fen());
+            sys("engine ready");
             return;
           }
 
-          if (!currentEvalAccepting) return;
+          if (!accepting) return;
           if (line.startsWith("info") && line.includes("score")) {
             const mMate = line.match(/score mate (-?\d+)/);
             if (mMate) {
@@ -461,7 +468,7 @@
         };
 
         sf.onerror = (e) => {
-          engineStatusEl.textContent = "engine: error";
+          engineStatusEl.textContent = "error";
           err("Stockfish worker error (see console).");
           console.error("stockfish worker error", e);
         };
@@ -473,10 +480,9 @@
         if (!sf || !engineReady) return;
         evalJob += 1;
         const jobId = evalJob;
-        currentEvalAccepting = true;
-
+        accepting = true;
         setTimeout(() => {
-          if (jobId === evalJob) currentEvalAccepting = false;
+          if (jobId === evalJob) accepting = false;
         }, 2500);
 
         sf.postMessage("stop");
