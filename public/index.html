@@ -9,11 +9,7 @@
     <link rel="icon" href="data:," />
 
     <style>
-      /* -------------------------
-         THEME (dark default)
-      --------------------------*/
       :root {
-        /* Dark theme defaults */
         --bg0: #0b0f18;
         --bg1: #0e1424;
         --card: rgba(16, 22, 38, 0.78);
@@ -22,42 +18,16 @@
         --muted: rgba(255, 255, 255, 0.60);
         --shadow: 0 22px 70px rgba(0, 0, 0, 0.45);
 
-        /* Controls */
         --btn: rgba(255, 255, 255, 0.08);
         --btnHover: rgba(255, 255, 255, 0.12);
         --input: rgba(255, 255, 255, 0.10);
         --pill: rgba(255, 255, 255, 0.08);
 
-        /* Eval number pill */
         --evalPill: rgba(255, 255, 255, 0.92);
         --evalText: rgba(0, 0, 0, 0.92);
 
-        /* Accent */
         --accent: rgba(255, 0, 120, 0.45);
       }
-
-      /* Optional light theme (toggleable) */
-      body[data-theme="light"] {
-        --bg0: #eef1ff;
-        --bg1: #e9f7ff;
-        --card: rgba(255, 255, 255, 0.78);
-        --border: rgba(0, 0, 0, 0.12);
-        --text: rgba(0, 0, 0, 0.92);
-        --muted: rgba(0, 0, 0, 0.60);
-        --shadow: 0 18px 60px rgba(20, 10, 60, 0.12);
-
-        --btn: rgba(255, 255, 255, 0.85);
-        --btnHover: rgba(255, 255, 255, 0.96);
-        --input: rgba(255, 255, 255, 0.92);
-        --pill: rgba(255, 255, 255, 0.60);
-
-        --evalPill: rgba(255, 255, 255, 0.92);
-        --evalText: rgba(0, 0, 0, 0.92);
-
-        --accent: rgba(255, 0, 120, 0.35);
-      }
-
-      * { box-sizing: border-box; }
 
       body {
         margin: 0;
@@ -83,7 +53,6 @@
         width: min(1120px, 100%);
       }
 
-      /* cm-chessboard needs a fixed-size container */
       #board {
         width: 520px;
         height: 520px;
@@ -98,7 +67,7 @@
       }
 
       .side {
-        width: 440px;
+        width: 460px;
         display: flex;
         flex-direction: column;
         gap: 14px;
@@ -163,7 +132,6 @@
         outline: none;
       }
       input::placeholder { color: rgba(255,255,255,0.45); }
-      body[data-theme="light"] input::placeholder { color: rgba(0,0,0,0.40); }
 
       .pill {
         padding: 8px 12px;
@@ -173,7 +141,7 @@
         font-size: 13px;
       }
 
-      /* ---------- Eval bar ---------- */
+      /* Eval bar */
       .evalWrap {
         display: grid;
         grid-template-columns: 1fr auto;
@@ -208,18 +176,15 @@
         background: var(--accent);
       }
 
-      .whiteFill,
-      .blackFill {
+      .whiteFill, .blackFill {
         position: absolute;
         top: 0;
         bottom: 0;
         width: 0%;
       }
-
       .whiteFill { left: 50%; background: rgba(255, 255, 255, 0.95); }
       .blackFill { right: 50%; background: rgba(0, 0, 0, 0.92); }
 
-      /* Eval number: always readable */
       .evalNum {
         font-size: 26px;
         font-weight: 950;
@@ -233,37 +198,67 @@
         border: 1px solid rgba(0,0,0,0.10);
         box-shadow: 0 10px 34px rgba(0,0,0,0.35);
       }
-      .evalNum.whiteFav { }
-      .evalNum.blackFav { }
-      .evalNum.neutral { opacity: 0.95; }
 
-      .log {
-        height: 200px;
+      /* Chat feed */
+      .feed {
+        height: 220px;
         overflow: auto;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 12px;
-        background: rgba(255, 255, 255, 0.05);
         border-radius: 14px;
-        padding: 10px;
         border: 1px solid var(--border);
-        white-space: pre-wrap;
-        color: rgba(255,255,255,0.85);
-      }
-      body[data-theme="light"] .log {
-        background: rgba(255,255,255,0.6);
-        color: rgba(0,0,0,0.82);
+        background: rgba(255, 255, 255, 0.05);
+        padding: 10px;
       }
 
-      .topRight {
-        display: flex;
+      .msg {
+        display: grid;
+        grid-template-columns: auto 1fr;
         gap: 10px;
-        align-items: center;
+        padding: 8px 8px;
+        border-radius: 12px;
       }
 
-      .toggle {
-        padding: 8px 10px;
+      .msg + .msg { margin-top: 6px; }
+
+      .meta {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        color: rgba(255,255,255,0.60);
+        white-space: nowrap;
+      }
+
+      .bubble {
         font-size: 13px;
-        border-radius: 999px;
+        line-height: 1.35;
+        color: rgba(255,255,255,0.92);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .sys .bubble {
+        color: rgba(255,255,255,0.78);
+      }
+
+      .sys .meta {
+        color: rgba(255,255,255,0.45);
+      }
+
+      .chatRow {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .chatInput {
+        padding: 10px 12px;
+        font-size: 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.08);
+        color: var(--text);
+        outline: none;
+        width: 100%;
+        text-transform: none;
       }
 
       @media (max-width: 960px) {
@@ -275,13 +270,12 @@
           min-width: 0;
           min-height: 0;
         }
-        .side { width: min(92vw, 560px); }
+        .side { width: min(92vw, 620px); }
       }
     </style>
   </head>
 
-  <!-- dark default is implicit by :root; set data-theme="dark" explicitly for clarity -->
-  <body data-theme="dark">
+  <body>
     <div class="wrap">
       <div id="board"></div>
 
@@ -291,9 +285,6 @@
             <div>
               <div class="title">Live Eval</div>
               <div class="sub">No hints. No undo. Just truth.</div>
-            </div>
-            <div class="topRight">
-              <button id="themeToggle" class="toggle" title="Toggle theme">Dark</button>
             </div>
           </div>
 
@@ -305,7 +296,7 @@
               <div id="whiteFill" class="whiteFill"></div>
               <div class="midline"></div>
             </div>
-            <div id="evalNum" class="evalNum neutral">+0.0</div>
+            <div id="evalNum" class="evalNum">+0.0</div>
           </div>
 
           <div style="height: 10px"></div>
@@ -335,8 +326,14 @@
         </div>
 
         <div class="card">
-          <div id="log" class="log"></div>
-          <div class="sub" style="margin-top: 8px">
+          <div class="feed" id="feed"></div>
+
+          <div class="chatRow">
+            <input id="chatInput" class="chatInput" placeholder="type here… (enter to send)" />
+            <button id="sendChat">Send</button>
+          </div>
+
+          <div class="sub" style="margin-top: 10px">
             Positive = White better · Negative = Black better
           </div>
         </div>
@@ -349,7 +346,6 @@
       const roomEl = document.getElementById("room");
       const roleEl = document.getElementById("role");
       const playersEl = document.getElementById("players");
-      const logEl = document.getElementById("log");
 
       const joinBtn = document.getElementById("join");
       const createBtn = document.getElementById("create");
@@ -364,33 +360,26 @@
       const blackFill = document.getElementById("blackFill");
       const evalNum = document.getElementById("evalNum");
 
-      const themeToggle = document.getElementById("themeToggle");
-      const body = document.body;
+      const feedEl = document.getElementById("feed");
+      const chatInput = document.getElementById("chatInput");
+      const sendChatBtn = document.getElementById("sendChat");
 
       let ws = null;
       let currentRoom = null;
       let myRole = "spectator";
-
       let currentFen = FEN.start;
       let currentPly = 0;
 
       const EVAL_MAX = 10.0;
 
-      function log(msg) {
-        const d = document.createElement("div");
-        d.textContent = msg;
-        logEl.appendChild(d);
-        logEl.scrollTop = logEl.scrollHeight;
+      function wsUrl() {
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        return `${proto}://${location.host}/ws`;
       }
 
       function fmt(n) {
         n = Number(n) || 0;
         return (n > 0 ? "+" : "") + n.toFixed(1);
-      }
-
-      function wsUrl() {
-        const proto = location.protocol === "https:" ? "wss" : "ws";
-        return `${proto}://${location.host}/ws`;
       }
 
       function plyFromFen(fen) {
@@ -427,7 +416,6 @@
 
       function renderEvalBar(score) {
         score = Number(score) || 0;
-
         const clamped = Math.max(-EVAL_MAX, Math.min(EVAL_MAX, score));
         const norm = clamped / EVAL_MAX;
         const fillPct = Math.abs(norm) * 50;
@@ -435,21 +423,41 @@
         if (norm > 0) {
           whiteFill.style.width = `${fillPct}%`;
           blackFill.style.width = `0%`;
-          evalNum.className = "evalNum whiteFav";
         } else if (norm < 0) {
           blackFill.style.width = `${fillPct}%`;
           whiteFill.style.width = `0%`;
-          evalNum.className = "evalNum blackFav";
         } else {
           whiteFill.style.width = `0%`;
           blackFill.style.width = `0%`;
-          evalNum.className = "evalNum neutral";
         }
 
         evalNum.textContent = fmt(score);
       }
 
-      function resetLocalState() {
+      function addMessage({ kind, at, from, text }) {
+        const row = document.createElement("div");
+        row.className = `msg ${kind === "sys" ? "sys" : ""}`;
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = kind === "sys" ? `${at} · sys` : `${at} · ${from}`;
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.textContent = text;
+
+        row.appendChild(meta);
+        row.appendChild(bubble);
+
+        feedEl.appendChild(row);
+        feedEl.scrollTop = feedEl.scrollHeight;
+      }
+
+      function sysLocal(text) {
+        addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text });
+      }
+
+      function resetUi() {
         myRole = "spectator";
         currentRoom = null;
         currentFen = FEN.start;
@@ -465,15 +473,74 @@
 
         restartBtn.disabled = true;
         copyBtn.disabled = true;
+
+        playOnlineBtn.disabled = false;
+        cancelSearchBtn.disabled = true;
+
+        feedEl.textContent = "";
       }
 
       function forceSnapback() {
         board.setPosition(currentFen);
       }
 
+      function sendChat() {
+        const text = (chatInput.value || "").trim();
+        if (!text) return;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          sysLocal("not connected");
+          return;
+        }
+        ws.send(JSON.stringify({ type: "chat", text }));
+        chatInput.value = "";
+      }
+
+      sendChatBtn.onclick = sendChat;
+      chatInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          sendChat();
+        }
+      });
+
       function attachSocketHandlers() {
+        ws.onopen = () => sysLocal("connected");
+
         ws.onmessage = (e) => {
           const msg = JSON.parse(e.data);
+
+          if (msg.type === "chat") {
+            addMessage(msg);
+            return;
+          }
+
+          if (msg.type === "queued") {
+            playOnlineBtn.disabled = true;
+            cancelSearchBtn.disabled = false;
+            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "queued" });
+            return;
+          }
+
+          if (msg.type === "queueCanceled") {
+            playOnlineBtn.disabled = false;
+            cancelSearchBtn.disabled = true;
+            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "search canceled" });
+            return;
+          }
+
+          if (msg.type === "queueError") {
+            playOnlineBtn.disabled = false;
+            cancelSearchBtn.disabled = true;
+            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: `queue error: ${msg.message || "unknown"}` });
+            return;
+          }
+
+          if (msg.type === "matchFound") {
+            playOnlineBtn.disabled = false;
+            cancelSearchBtn.disabled = true;
+            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: `match found: room ${msg.room}` });
+            return;
+          }
 
           if (msg.type === "joined") {
             currentRoom = msg.room;
@@ -484,7 +551,7 @@
 
             setOrientationForRole();
 
-            log(`joined ${msg.room} as ${msg.role}`);
+            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: `joined ${msg.room} as ${msg.role}` });
 
             const u = new URL(location.href);
             u.searchParams.set("room", msg.room);
@@ -514,78 +581,46 @@
             return;
           }
 
-          if (msg.type === "queued") {
-            playOnlineBtn.disabled = true;
-            cancelSearchBtn.disabled = false;
-            log("queued");
-            return;
-          }
-
-          if (msg.type === "matchFound") {
-            playOnlineBtn.disabled = false;
-            cancelSearchBtn.disabled = true;
-            log(`match found: room ${msg.room}`);
-            return;
-          }
-
-          if (msg.type === "queueCanceled") {
-            playOnlineBtn.disabled = false;
-            cancelSearchBtn.disabled = true;
-            log("search canceled");
-            return;
-          }
-
-          if (msg.type === "queueError") {
-            playOnlineBtn.disabled = false;
-            cancelSearchBtn.disabled = true;
-            log(`queue error: ${msg.message || "unknown"}`);
-            return;
-          }
-
           if (msg.type === "illegal") {
-            log("illegal / not your turn");
+            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "illegal move" });
             forceSnapback();
             return;
           }
         };
 
-        ws.onclose = () => log("disconnected");
-        ws.onerror = () => log("socket error");
+        ws.onclose = () => {
+          addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "disconnected" });
+        };
+
+        ws.onerror = () => {
+          addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "socket error" });
+        };
       }
 
       function connectForOnlineQueue() {
         if (ws) ws.close();
         ws = new WebSocket(wsUrl());
-        logEl.textContent = "";
-        resetLocalState();
-        playOnlineBtn.disabled = true;
-        cancelSearchBtn.disabled = false;
-        log("connecting…");
-
-        ws.onopen = () => {
-          log("connected");
-          ws.send(JSON.stringify({ type: "queue" }));
-        };
-
+        resetUi();
         attachSocketHandlers();
+
+        // queue after open
+        ws.addEventListener("open", () => {
+          ws.send(JSON.stringify({ type: "queue" }));
+        }, { once: true });
       }
 
       function connectAndJoin(room) {
         if (ws) ws.close();
         ws = new WebSocket(wsUrl());
-        logEl.textContent = "";
-        resetLocalState();
-        log("connecting…");
-
-        ws.onopen = () => {
-          log("connected");
-          ws.send(JSON.stringify({ type: "join", room }));
-        };
-
+        resetUi();
         attachSocketHandlers();
+
+        ws.addEventListener("open", () => {
+          ws.send(JSON.stringify({ type: "join", room }));
+        }, { once: true });
       }
 
-      // Turn-aware input + snapback
+      // Move input
       board.enableMoveInput((event) => {
         if (!canInteract()) return false;
 
@@ -595,7 +630,7 @@
 
         if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
           if (!isMyTurn(currentFen)) {
-            log("not your turn");
+            addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "not your turn" });
             forceSnapback();
             return false;
           }
@@ -607,28 +642,10 @@
             to: event.squareTo,
             promotion: "q",
           }));
-
           return true;
         }
-
         return true;
       });
-
-      // Theme toggle + persistence
-      function applyTheme(theme) {
-        body.setAttribute("data-theme", theme);
-        themeToggle.textContent = theme === "dark" ? "Dark" : "Light";
-      }
-
-      const savedTheme = localStorage.getItem("lec_theme");
-      if (savedTheme === "light") applyTheme("light");
-      else applyTheme("dark");
-
-      themeToggle.onclick = () => {
-        const next = body.getAttribute("data-theme") === "dark" ? "light" : "dark";
-        applyTheme(next);
-        localStorage.setItem("lec_theme", next);
-      };
 
       // Buttons
       playOnlineBtn.onclick = () => connectForOnlineQueue();
@@ -656,19 +673,15 @@
         const u = new URL(location.href);
         if (currentRoom) u.searchParams.set("room", currentRoom);
         await navigator.clipboard.writeText(u.toString());
-        log("room link copied");
+        addMessage({ kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "room link copied" });
       };
 
       // Initial
       renderEvalBar(0);
 
-      // Auto-join via URL
+      // Auto-join via URL param
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) connectAndJoin(roomParam.trim().toUpperCase());
-      else {
-        playOnlineBtn.disabled = false;
-        cancelSearchBtn.disabled = true;
-      }
     </script>
   </body>
 </html>

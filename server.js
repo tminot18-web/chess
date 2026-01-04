@@ -1,602 +1,401 @@
-/**
- * server.js — Live Eval Chess Online
- *
- * - Serve /public
- * - WebSocket multiplayer at /ws
- * - Private rooms (join/create/share link)
- * - Global matchmaking queue (Play Online)
- * - Authoritative chess rules (chess.js)
- * - Broadcast: state (fen) + numeric eval ONLY (no best moves)
- * - Stockfish eval if available; deterministic fallback
- */
+// server.js
+// Simple HTTP + WebSocket server with:
+// - matchmaking queue ("Play Online")
+// - private rooms ("Join/Create")
+// - Stockfish eval (server-side binary) broadcast as numeric only
+// - chat + system feed events
 
-const path = require("path");
-const http = require("http");
-const express = require("express");
-const WebSocket = require("ws");
-const { Chess } = require("chess.js");
-const { spawn } = require("child_process");
-const fs = require("fs");
+import express from "express";
+import http from "http";
+import { WebSocketServer } from "ws";
+import path from "path";
+import url from "url";
+import { spawn } from "child_process";
 
-const PORT = process.env.PORT || 10000;
+const __filename = url.fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// -----------------------------
-// Helpers
-// -----------------------------
-function genRoomCode(len = 5) {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let out = "";
-  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
+const PORT = process.env.PORT || 3000;
+
+const app = express();
+app.use(express.static(path.join(__dirname, "public")));
+
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: "/ws" });
+
+/** ---- Room + Queue state ---- */
+const rooms = new Map(); // roomId -> { id, fen, clients:Set<ws>, roles: Map<ws,"white"|"black"|"spectator">, engine, eval }
+let queue = []; // ws[] waiting
+
+function now() {
+  return new Date().toISOString().slice(11, 19);
 }
 
-function safeJsonParse(str) {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return null;
-  }
-}
-
-function send(ws, obj) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+function safeSend(ws, obj) {
+  if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
 }
 
 function broadcast(room, obj) {
-  const msg = JSON.stringify(obj);
-  for (const client of room.clients) {
-    if (client.readyState === WebSocket.OPEN) client.send(msg);
-  }
+  for (const c of room.clients) safeSend(c, obj);
 }
 
-function countPlayers(room) {
-  let n = 0;
-  for (const client of room.clients) {
-    if (client._role === "white" || client._role === "black") n++;
-  }
-  return n;
+function broadcastPresence(room) {
+  const players = [...room.roles.values()].filter((r) => r === "white" || r === "black").length;
+  broadcast(room, { type: "presence", players });
+}
+
+function makeRoomId() {
+  return Math.random().toString(36).slice(2, 7).toUpperCase();
+}
+
+function initialFen() {
+  // standard starting position
+  return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 }
 
 function plyFromFen(fen) {
-  const parts = (fen || "").split(" ");
-  const turn = parts[1] || "w";
-  const fullmove = parseInt(parts[5] || "1", 10);
-  const base = (fullmove - 1) * 2;
-  return base + (turn === "b" ? 1 : 0);
+  try {
+    const parts = fen.split(" ");
+    const turn = parts[1] || "w";
+    const fullmove = parseInt(parts[5] || "1", 10);
+    const base = (fullmove - 1) * 2;
+    return base + (turn === "b" ? 1 : 0);
+  } catch {
+    return 0;
+  }
 }
 
-function materialEvalFromFen(fen) {
-  const boardPart = (fen || "").split(" ")[0] || "";
-  const val = { p: 1, n: 3, b: 3, r: 5, q: 9 };
-  let score = 0;
-
-  for (const c of boardPart) {
-    if (c === "/" || (c >= "1" && c <= "8")) continue;
-    const lower = c.toLowerCase();
-    if (!val[lower]) continue;
-    score += c === lower ? -val[lower] : val[lower];
-  }
-
-  score = Math.max(-9.9, Math.min(9.9, score));
-  return Math.round(score * 10) / 10;
+/** ---- Chat + System feed helpers ---- */
+function sys(room, text) {
+  broadcast(room, { type: "chat", kind: "sys", at: now(), text });
+}
+function say(room, fromRole, text) {
+  broadcast(room, { type: "chat", kind: "user", at: now(), from: fromRole, text });
 }
 
-// -----------------------------
-// Stockfish (safe, queued, path-safe)
-// -----------------------------
-class StockfishEngine {
-  constructor() {
-    this.available = false;
-    this.ready = false;
-    this.proc = null;
-    this.buffer = "";
-    this.queue = [];
-    this.busy = false;
-    this._initTried = false;
-    this._binary = null;
-  }
+/** ---- Stockfish (server-side) ----
+ * Your Render setup already includes stockfish in PATH (or a known location),
+ * based on your prior fixes.
+ *
+ * This server runs ONE engine per room, and only publishes numeric score.
+ */
+function createEngineForRoom(room) {
+  // Use environment override if you want:
+  const STOCKFISH_PATH = process.env.STOCKFISH_PATH || "stockfish";
 
-  _candidateBinaries() {
-    return [
-      process.env.STOCKFISH_PATH,
-      "/usr/games/stockfish",
-      "/usr/bin/stockfish",
-      "stockfish",
-    ].filter(Boolean);
-  }
+  const engine = spawn(STOCKFISH_PATH, [], { stdio: ["pipe", "pipe", "pipe"] });
 
-  _fileExists(p) {
-    try {
-      return fs.existsSync(p);
-    } catch {
-      return false;
-    }
-  }
+  engine.on("error", (err) => {
+    room.engineDead = true;
+    sys(room, `engine error: ${err.code || err.message}`);
+  });
 
-  init() {
-    if (this._initTried) return;
-    this._initTried = true;
+  // UCI init
+  engine.stdin.write("uci\n");
+  engine.stdin.write("isready\n");
 
-    const candidates = this._candidateBinaries();
-    let lastErr = null;
+  let buffer = "";
+  engine.stdout.on("data", (chunk) => {
+    buffer += chunk.toString("utf8");
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const s = line.trim();
+      if (!s) continue;
 
-    for (const cmd of candidates) {
-      try {
-        if (cmd.startsWith("/") && !this._fileExists(cmd)) continue;
+      // Parse numeric eval from "info ... score cp N" OR "score mate N"
+      // We ONLY broadcast number, never best moves.
+      if (s.startsWith("info") && s.includes(" score ")) {
+        // Prefer cp if present
+        const cpMatch = s.match(/score cp (-?\d+)/);
+        const mateMatch = s.match(/score mate (-?\d+)/);
 
-        const sf = spawn(cmd, [], { stdio: ["pipe", "pipe", "pipe"] });
-        this.proc = sf;
-        this._binary = cmd;
-
-        sf.on("error", (err) => {
-          console.error(`[stockfish] spawn error (${this._binary}):`, err?.message || err);
-          this.available = false;
-          this.ready = false;
-          this._failAll(err);
-        });
-
-        sf.on("exit", (code, signal) => {
-          console.error(`[stockfish] exited (${this._binary}):`, { code, signal });
-          this.available = false;
-          this.ready = false;
-          this._failAll(new Error("stockfish exited"));
-        });
-
-        sf.stderr.on("data", (d) => {
-          console.error(`[stockfish] stderr (${this._binary}):`, d.toString().slice(0, 400));
-        });
-
-        sf.stdout.on("data", (d) => {
-          this.buffer += d.toString();
-          this._drainLines();
-        });
-
-        this.available = true;
-        console.log(`[stockfish] started: ${this._binary}`);
-
-        this._write("uci");
-        this._write("isready");
-
-        setTimeout(() => {
-          if (!this.ready) {
-            console.error("[stockfish] not ready after timeout; falling back to deterministic eval");
-            this.available = false;
-          }
-        }, 3000);
-
-        return;
-      } catch (e) {
-        lastErr = e;
+        if (cpMatch) {
+          const cp = parseInt(cpMatch[1], 10);
+          const pawns = cp / 100;
+          room.lastEval = pawns;
+          broadcast(room, { type: "eval", score: pawns, ply: plyFromFen(room.fen) });
+        } else if (mateMatch) {
+          const mate = parseInt(mateMatch[1], 10);
+          // Represent mate as large magnitude (still numeric)
+          const score = mate > 0 ? 99 : -99;
+          room.lastEval = score;
+          broadcast(room, { type: "eval", score, ply: plyFromFen(room.fen) });
+        }
       }
     }
+  });
 
-    console.error("[stockfish] could not start from candidates:", candidates);
-    if (lastErr) console.error("[stockfish] last error:", lastErr?.message || lastErr);
-
-    this.available = false;
-    this.ready = false;
-    this.proc = null;
-  }
-
-  _write(cmd) {
-    try {
-      if (this.proc && this.proc.stdin && !this.proc.stdin.destroyed) {
-        this.proc.stdin.write(cmd + "\n");
-      }
-    } catch (e) {
-      console.error("[stockfish] write failed:", e?.message || e);
-    }
-  }
-
-  _drainLines() {
-    let idx;
-    while ((idx = this.buffer.indexOf("\n")) >= 0) {
-      const line = this.buffer.slice(0, idx).trim();
-      this.buffer = this.buffer.slice(idx + 1);
-      if (!line) continue;
-
-      if (line === "readyok") this.ready = true;
-
-      const job = this.queue[0];
-      if (job && job._onLine) job._onLine(line);
-    }
-  }
-
-  _failAll(err) {
-    while (this.queue.length) {
-      const job = this.queue.shift();
-      try {
-        job.reject(err);
-      } catch {}
-    }
-    this.busy = false;
-  }
-
-  _scoreToPawnsWhitePOV(scoreObj, fen) {
-    if (!scoreObj) return materialEvalFromFen(fen);
-
-    const parts = (fen || "").split(" ");
-    const stm = parts[1] || "w";
-
-    let pawns = 0;
-    if (scoreObj.type === "cp") pawns = scoreObj.value / 100;
-    else if (scoreObj.type === "mate") pawns = (scoreObj.value >= 0 ? 1 : -1) * 99;
-    else return materialEvalFromFen(fen);
-
-    if (stm === "b") pawns = -pawns; // convert side-to-move to white POV
-
-    if (Math.abs(pawns) < 90) {
-      pawns = Math.max(-9.9, Math.min(9.9, pawns));
-      pawns = Math.round(pawns * 10) / 10;
-    }
-
-    return pawns;
-  }
-
-  evaluateFenQueued(fen, depth = 12) {
-    this.init();
-    if (!this.available || !this.proc) return Promise.resolve(materialEvalFromFen(fen));
-
-    return new Promise((resolve, reject) => {
-      const timeoutMs = 1600;
-
-      const job = {
-        _fen: fen,
-        _depth: depth,
-        resolve,
-        reject,
-        score: null,
-        done: false,
-        timeout: null,
-        _onLine: null,
-      };
-
-      job._onLine = (line) => {
-        if (line.startsWith("info ")) {
-          const mCp = line.match(/\bscore cp (-?\d+)\b/);
-          const mMate = line.match(/\bscore mate (-?\d+)\b/);
-          if (mCp) job.score = { type: "cp", value: parseInt(mCp[1], 10) };
-          else if (mMate) job.score = { type: "mate", value: parseInt(mMate[1], 10) };
-        }
-
-        if (line.startsWith("bestmove ")) {
-          job.done = true;
-          clearTimeout(job.timeout);
-
-          const score = this._scoreToPawnsWhitePOV(job.score, job._fen);
-          resolve(score);
-
-          this.queue.shift();
-          this.busy = false;
-          this._runNext();
-        }
-      };
-
-      job.timeout = setTimeout(() => {
-        if (job.done) return;
-        job.done = true;
-
-        const score = this._scoreToPawnsWhitePOV(job.score, job._fen);
-        resolve(score);
-
-        if (this.queue[0] === job) this.queue.shift();
-        this.busy = false;
-        this._runNext();
-      }, timeoutMs);
-
-      this.queue.push(job);
-      this._runNext();
-    });
-  }
-
-  _runNext() {
-    if (this.busy) return;
-    if (!this.queue.length) return;
-
-    if (!this.available || !this.proc) {
-      const job = this.queue.shift();
-      clearTimeout(job.timeout);
-      this.busy = false;
-      job.resolve(materialEvalFromFen(job._fen));
-      return;
-    }
-
-    this.busy = true;
-    const job = this.queue[0];
-
-    this._write("ucinewgame");
-    this._write("isready");
-    this._write(`position fen ${job._fen}`);
-    this._write(`go depth ${job._depth}`);
-  }
+  room.engine = engine;
+  room.engineDead = false;
 }
 
-const engine = new StockfishEngine();
+function requestEval(room) {
+  if (!room.engine || room.engineDead) return;
+  // modest depth for responsiveness
+  const depth = process.env.EVAL_DEPTH ? parseInt(process.env.EVAL_DEPTH, 10) : 12;
 
-// -----------------------------
-// Rooms + Global matchmaking queue
-// -----------------------------
-const rooms = new Map(); // code -> room
-let waiting = null;      // single-slot MVP: { ws, ts }
+  room.engine.stdin.write(`position fen ${room.fen}\n`);
+  room.engine.stdin.write(`go depth ${depth}\n`);
+}
 
-function getOrCreateRoom(code) {
-  if (!code) code = genRoomCode();
-  let room = rooms.get(code);
-  if (!room) {
-    room = {
-      code,
-      game: new Chess(),
-      clients: new Set(),
-      seats: { white: null, black: null },
-      lastEval: 0.0,
-      lastEvalPly: 0,
-      createdAt: Date.now(),
-    };
-    rooms.set(code, room);
-  }
+/** ---- Room lifecycle ---- */
+function createRoom(roomId) {
+  const room = {
+    id: roomId,
+    fen: initialFen(),
+    clients: new Set(),
+    roles: new Map(),
+    engine: null,
+    engineDead: false,
+    lastEval: 0,
+  };
+  rooms.set(roomId, room);
+  createEngineForRoom(room);
+  return room;
+}
+
+function joinRoom(ws, roomId) {
+  if (!roomId) roomId = makeRoomId();
+
+  let room = rooms.get(roomId);
+  if (!room) room = createRoom(roomId);
+
+  room.clients.add(ws);
+
+  // assign role if slot free
+  const existingRoles = new Set(room.roles.values());
+  let role = "spectator";
+  if (!existingRoles.has("white")) role = "white";
+  else if (!existingRoles.has("black")) role = "black";
+
+  room.roles.set(ws, role);
+  ws.roomId = roomId;
+  ws.role = role;
+
+  safeSend(ws, { type: "joined", room: roomId, role });
+  safeSend(ws, { type: "state", fen: room.fen });
+  broadcastPresence(room);
+  sys(room, `${role} joined`);
+
+  // push latest eval immediately
+  safeSend(ws, { type: "eval", score: room.lastEval || 0, ply: plyFromFen(room.fen) });
+  requestEval(room);
+
   return room;
 }
 
 function leaveRoom(ws) {
-  const room = ws._room;
+  const roomId = ws.roomId;
+  if (!roomId) return;
+  const room = rooms.get(roomId);
   if (!room) return;
 
   room.clients.delete(ws);
-  if (room.seats.white === ws) room.seats.white = null;
-  if (room.seats.black === ws) room.seats.black = null;
+  room.roles.delete(ws);
 
-  ws._room = null;
-  ws._role = "spectator";
+  sys(room, `${ws.role || "player"} left`);
+  broadcastPresence(room);
 
-  broadcast(room, { type: "presence", players: countPlayers(room) });
+  ws.roomId = null;
+  ws.role = null;
 
-  if (room.clients.size === 0) rooms.delete(room.code);
-}
-
-function assignRole(room, ws) {
-  if (!room.seats.white || room.seats.white.readyState !== WebSocket.OPEN) {
-    room.seats.white = ws;
-    ws._role = "white";
-    return "white";
+  // cleanup room if empty
+  if (room.clients.size === 0) {
+    try {
+      room.engine?.stdin?.write("quit\n");
+      room.engine?.kill?.();
+    } catch {}
+    rooms.delete(roomId);
   }
-  if (!room.seats.black || room.seats.black.readyState !== WebSocket.OPEN) {
-    room.seats.black = ws;
-    ws._role = "black";
-    return "black";
+}
+
+function removeFromQueue(ws) {
+  queue = queue.filter((x) => x !== ws);
+}
+
+/** ---- Matchmaking ---- */
+function tryMatchmake() {
+  // pick first two in queue who are open
+  while (queue.length >= 2) {
+    const a = queue.shift();
+    const b = queue.shift();
+    if (!a || !b) continue;
+
+    const roomId = makeRoomId();
+    const room = createRoom(roomId);
+
+    // force roles for matched players
+    room.clients.add(a);
+    room.clients.add(b);
+    room.roles.set(a, "white");
+    room.roles.set(b, "black");
+
+    a.roomId = roomId; a.role = "white";
+    b.roomId = roomId; b.role = "black";
+
+    safeSend(a, { type: "matchFound", room: roomId, role: "white" });
+    safeSend(b, { type: "matchFound", room: roomId, role: "black" });
+
+    safeSend(a, { type: "joined", room: roomId, role: "white" });
+    safeSend(b, { type: "joined", room: roomId, role: "black" });
+
+    safeSend(a, { type: "state", fen: room.fen });
+    safeSend(b, { type: "state", fen: room.fen });
+
+    broadcastPresence(room);
+    sys(room, "match started");
+    requestEval(room);
+
+    break;
   }
-  ws._role = "spectator";
-  return "spectator";
 }
 
-function seatExplicit(room, ws, role) {
-  if (role === "white") room.seats.white = ws;
-  if (role === "black") room.seats.black = ws;
-  ws._role = role;
+/** ---- Chess rules (very lightweight legality) ----
+ * NOTE: You previously had legality enforced server-side already.
+ * If you're relying on chess.js server-side elsewhere, keep it.
+ *
+ * For now, we trust the existing move validation that you had.
+ * If your current server.js already validates moves properly, replace this
+ * with that logic. This file keeps your existing behavior pattern: server
+ * decides legality and broadcasts updated fen.
+ */
+import { Chess } from "chess.js"; // requires your package.json includes chess.js
+
+function getGame(room) {
+  if (!room._game) {
+    room._game = new Chess();
+    room._game.load(room.fen);
+  }
+  return room._game;
 }
 
-function canMove(room, ws) {
-  const turn = room.game.turn();
-  if (ws._role === "white" && turn === "w") return true;
-  if (ws._role === "black" && turn === "b") return true;
-  return false;
+function resetGame(room) {
+  room.fen = initialFen();
+  room._game = new Chess();
+  room._game.load(room.fen);
+  room.lastEval = 0;
 }
 
-async function updateEvalAndBroadcast(room) {
-  const fen = room.game.fen();
-  const ply = plyFromFen(fen);
-
-  const score = await engine.evaluateFenQueued(fen, 12).catch(() => materialEvalFromFen(fen));
-  if (ply < room.lastEvalPly) return;
-
-  room.lastEval = typeof score === "number" ? score : 0.0;
-  room.lastEvalPly = ply;
-
-  broadcast(room, { type: "eval", score: room.lastEval, ply });
-}
-
-function isAlive(ws) {
-  return ws && ws.readyState === WebSocket.OPEN;
-}
-
-function clearWaitingIf(ws) {
-  if (waiting && waiting.ws === ws) waiting = null;
-}
-
-function startMatch(wsA, wsB) {
-  // Ensure neither is in a room
-  leaveRoom(wsA);
-  leaveRoom(wsB);
-
-  const room = getOrCreateRoom("");
-  room.game.reset();
-  room.lastEval = 0.0;
-  room.lastEvalPly = 0;
-
-  // Randomize colors
-  const aWhite = Math.random() < 0.5;
-  const white = aWhite ? wsA : wsB;
-  const black = aWhite ? wsB : wsA;
-
-  room.clients.add(white);
-  room.clients.add(black);
-
-  white._room = room;
-  black._room = room;
-
-  seatExplicit(room, white, "white");
-  seatExplicit(room, black, "black");
-
-  // Immediate UX feedback
-  send(white, { type: "matchFound", room: room.code, role: "white" });
-  send(black, { type: "matchFound", room: room.code, role: "black" });
-
-  // Standard room join + initial state
-  send(white, { type: "joined", room: room.code, role: "white" });
-  send(black, { type: "joined", room: room.code, role: "black" });
-
-  broadcast(room, { type: "presence", players: 2 });
-  broadcast(room, { type: "state", fen: room.game.fen() });
-  broadcast(room, { type: "eval", score: room.lastEval, ply: room.lastEvalPly });
-}
-
-// -----------------------------
-// Express + HTTP + WS
-// -----------------------------
-const app = express();
-
-app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
-
-app.get("*", (_req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server, path: "/ws" });
-
+/** ---- WebSocket handling ---- */
 wss.on("connection", (ws) => {
-  ws._room = null;
-  ws._role = "spectator";
+  ws.roomId = null;
+  ws.role = null;
 
+  // no automatic join; client will send join/queue
   ws.on("message", (raw) => {
-    const msg = safeJsonParse(raw.toString());
-    if (!msg || !msg.type) return;
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString("utf8"));
+    } catch {
+      return;
+    }
 
-    // -------- Global Matchmaking --------
+    // queue
     if (msg.type === "queue") {
-      // If you're currently seated in a live game, don't queue.
-      if (ws._room && (ws._role === "white" || ws._role === "black")) {
-        send(ws, { type: "queueError", message: "You are already in a game." });
-        return;
-      }
+      // leave current room if any
+      leaveRoom(ws);
+      removeFromQueue(ws);
 
-      // Ensure you're not waiting already
-      clearWaitingIf(ws);
-
-      // Clean up dead waiting slot
-      if (waiting && !isAlive(waiting.ws)) waiting = null;
-
-      // If nobody waiting, enqueue
-      if (!waiting) {
-        waiting = { ws, ts: Date.now() };
-        send(ws, { type: "queued" });
-        return;
-      }
-
-      // If waiting is the same socket, confirm queued
-      if (waiting.ws === ws) {
-        send(ws, { type: "queued" });
-        return;
-      }
-
-      // Match!
-      const other = waiting.ws;
-      waiting = null;
-
-      if (!isAlive(other)) {
-        // Race: other died; enqueue this ws
-        waiting = { ws, ts: Date.now() };
-        send(ws, { type: "queued" });
-        return;
-      }
-
-      startMatch(other, ws);
+      queue.push(ws);
+      safeSend(ws, { type: "queued" });
+      // matchmake now
+      tryMatchmake();
       return;
     }
 
     if (msg.type === "cancelQueue") {
-      clearWaitingIf(ws);
-      send(ws, { type: "queueCanceled" });
+      removeFromQueue(ws);
+      safeSend(ws, { type: "queueCanceled" });
       return;
     }
 
-    // -------- Private Rooms --------
+    // join / create
     if (msg.type === "join") {
-      clearWaitingIf(ws);
-
-      const requested = (msg.room || "").trim().toUpperCase();
-
-      // Leave any existing room first
-      if (ws._room) leaveRoom(ws);
-
-      const room = getOrCreateRoom(requested);
-
-      ws._room = room;
-      room.clients.add(ws);
-
-      const role = assignRole(room, ws);
-
-      send(ws, { type: "joined", room: room.code, role });
-      broadcast(room, { type: "presence", players: countPlayers(room) });
-
-      send(ws, { type: "state", fen: room.game.fen() });
-      send(ws, { type: "eval", score: room.lastEval, ply: room.lastEvalPly });
-      return;
-    }
-
-    const room = ws._room;
-    if (!room) return;
-
-    // -------- Moves --------
-    if (msg.type === "move") {
-      if (!canMove(room, ws)) {
-        send(ws, { type: "illegal" });
-        return;
-      }
-
-      const move = room.game.move({
-        from: msg.from,
-        to: msg.to,
-        promotion: msg.promotion || "q",
-      });
-
-      if (!move) {
-        send(ws, { type: "illegal" });
-        return;
-      }
-
-      broadcast(room, { type: "state", fen: room.game.fen() });
-
-      updateEvalAndBroadcast(room).catch((e) => {
-        console.error("[eval] failed:", e?.message || e);
-      });
-
-      return;
-    }
-
-    // -------- Restart --------
-    if (msg.type === "restart") {
-      room.game.reset();
-      room.lastEval = 0.0;
-      room.lastEvalPly = 0;
-
-      broadcast(room, { type: "state", fen: room.game.fen() });
-      broadcast(room, { type: "eval", score: room.lastEval, ply: room.lastEvalPly });
-      return;
-    }
-
-    // -------- Leave (optional) --------
-    if (msg.type === "leave") {
+      removeFromQueue(ws);
       leaveRoom(ws);
-      send(ws, { type: "left" });
+
+      const roomId = (msg.room || "").trim().toUpperCase();
+      const room = joinRoom(ws, roomId);
+
+      // system message "connected" in feed
+      sys(room, "connected");
+      return;
+    }
+
+    // restart
+    if (msg.type === "restart") {
+      const room = rooms.get(ws.roomId);
+      if (!room) return;
+
+      // allow either player to restart (MVP)
+      resetGame(room);
+      broadcast(room, { type: "state", fen: room.fen });
+      broadcast(room, { type: "eval", score: 0, ply: plyFromFen(room.fen) });
+      sys(room, "game restarted");
+      requestEval(room);
+      return;
+    }
+
+    // chat
+    if (msg.type === "chat") {
+      const room = rooms.get(ws.roomId);
+      if (!room) return;
+
+      const text = (msg.text || "").toString().trim();
+      if (!text) return;
+      if (text.length > 280) return;
+
+      const fromRole = ws.role || "spectator";
+      say(room, fromRole, text);
+      return;
+    }
+
+    // move
+    if (msg.type === "move") {
+      const room = rooms.get(ws.roomId);
+      if (!room) return;
+
+      const role = ws.role;
+      if (role !== "white" && role !== "black") {
+        safeSend(ws, { type: "illegal" });
+        sys(room, "illegal move (spectator)");
+        return;
+      }
+
+      const game = getGame(room);
+      const turn = game.turn(); // 'w' or 'b'
+      if ((turn === "w" && role !== "white") || (turn === "b" && role !== "black")) {
+        safeSend(ws, { type: "illegal" });
+        sys(room, "illegal move (not your turn)");
+        return;
+      }
+
+      const from = (msg.from || "").toString();
+      const to = (msg.to || "").toString();
+      const promotion = (msg.promotion || "q").toString();
+
+      const move = game.move({ from, to, promotion });
+      if (!move) {
+        safeSend(ws, { type: "illegal" });
+        sys(room, "illegal move");
+        return;
+      }
+
+      room.fen = game.fen();
+      broadcast(room, { type: "state", fen: room.fen });
+      requestEval(room);
       return;
     }
   });
 
   ws.on("close", () => {
-    clearWaitingIf(ws);
+    removeFromQueue(ws);
     leaveRoom(ws);
-  });
-
-  ws.on("error", (err) => {
-    console.error("[ws] error:", err?.message || err);
   });
 });
 
-process.on("unhandledRejection", (err) => console.error("[process] unhandledRejection:", err));
-process.on("uncaughtException", (err) => console.error("[process] uncaughtException:", err));
-
 server.listen(PORT, () => {
-  console.log(`Live Eval Chess online on :${PORT}`);
+  console.log(`listening on ${PORT}`);
 });
 
