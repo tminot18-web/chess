@@ -5,28 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess</title>
 
-    <!-- cm-chessboard CSS (your local copy) -->
+    <!-- cm-chessboard CSS (local assets you already have in /public/cm-assets) -->
     <link rel="stylesheet" href="/cm-assets/chessboard.css" />
     <link rel="icon" href="data:," />
 
     <style>
       :root {
-        --bg0: #0b0f18;
-        --bg1: #0e1424;
-        --card: rgba(16, 22, 38, 0.78);
-        --border: rgba(255, 255, 255, 0.1);
+        --bg0: #090b12;
+        --bg1: #0e1426;
+        --card: rgba(18, 24, 42, 0.72);
+        --border: rgba(255, 255, 255, 0.10);
         --text: rgba(255, 255, 255, 0.92);
-        --muted: rgba(255, 255, 255, 0.6);
-        --shadow: 0 22px 70px rgba(0, 0, 0, 0.45);
+        --muted: rgba(255, 255, 255, 0.60);
+        --shadow: 0 22px 70px rgba(0, 0, 0, 0.48);
 
         --btn: rgba(255, 255, 255, 0.08);
         --btnHover: rgba(255, 255, 255, 0.12);
-        --input: rgba(255, 255, 255, 0.1);
-        --pill: rgba(255, 255, 255, 0.08);
 
-        --accent: rgba(255, 0, 120, 0.45);
-        --ok: rgba(80, 255, 160, 0.9);
+        --input: rgba(255, 255, 255, 0.10);
+
+        --white: rgba(255, 255, 255, 0.92);
+        --black: rgba(0, 0, 0, 0.85);
+
+        --good: rgba(70, 255, 160, 0.90);
         --bad: rgba(255, 90, 120, 0.95);
+        --warn: rgba(255, 200, 60, 0.95);
       }
 
       * { box-sizing: border-box; }
@@ -36,53 +39,50 @@
         font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
         min-height: 100vh;
         display: flex;
-        align-items: center;
         justify-content: center;
-        background:
-          radial-gradient(1100px 800px at 20% 20%, rgba(255,255,255,0.06) 0%, transparent 55%),
-          radial-gradient(900px 700px at 80% 30%, rgba(255,0,120,0.08) 0%, transparent 60%),
-          radial-gradient(900px 700px at 60% 90%, rgba(0,160,255,0.10) 0%, transparent 62%),
-          linear-gradient(180deg, var(--bg0), var(--bg1));
+        align-items: center;
         color: var(--text);
+        background:
+          radial-gradient(1000px 700px at 20% 20%, rgba(255,255,255,0.06) 0%, transparent 60%),
+          radial-gradient(900px 700px at 80% 25%, rgba(255,0,140,0.08) 0%, transparent 65%),
+          radial-gradient(900px 700px at 55% 95%, rgba(0,170,255,0.12) 0%, transparent 60%),
+          linear-gradient(180deg, var(--bg0), var(--bg1));
       }
 
       .wrap {
+        width: min(1200px, 100%);
+        padding: 22px;
         display: flex;
-        gap: 28px;
+        gap: 26px;
         align-items: flex-start;
         justify-content: center;
-        padding: 22px;
-        width: min(1120px, 100%);
       }
 
       #board {
         width: 520px;
         height: 520px;
         flex: 0 0 520px;
-        min-width: 520px;
-        min-height: 520px;
         border-radius: 18px;
         overflow: hidden;
-        background: #fff;
+        border: 1px solid rgba(255,255,255,0.10);
         box-shadow: var(--shadow);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: #fff;
         position: relative;
       }
 
-      /* visible even if JS dies */
-      .boardFallback {
+      .fallback {
         position: absolute;
         inset: 0;
         display: grid;
         place-items: center;
-        color: rgba(0,0,0,0.6);
-        font-weight: 800;
-        letter-spacing: -0.02em;
         pointer-events: none;
+        color: rgba(0,0,0,0.55);
+        font-weight: 900;
+        letter-spacing: -0.02em;
       }
 
       .side {
-        width: 460px;
+        width: 520px;
         display: flex;
         flex-direction: column;
         gap: 14px;
@@ -111,8 +111,8 @@
       }
 
       .sub {
-        color: var(--muted);
         font-size: 13px;
+        color: var(--muted);
       }
 
       .row {
@@ -126,7 +126,7 @@
         padding: 8px 12px;
         border-radius: 999px;
         border: 1px solid var(--border);
-        background: var(--pill);
+        background: rgba(255,255,255,0.06);
         font-size: 13px;
       }
 
@@ -137,31 +137,98 @@
         border: 1px solid var(--border);
         background: var(--btn);
         cursor: pointer;
-        font-weight: 800;
+        font-weight: 900;
         color: var(--text);
       }
       button:hover { background: var(--btnHover); }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+      .primary {
+        border-color: rgba(255,255,255,0.18);
+        background: rgba(255,255,255,0.10);
+      }
 
       input {
         padding: 10px 12px;
         font-size: 14px;
         border-radius: 12px;
         border: 1px solid var(--border);
-        width: 170px;
-        text-transform: uppercase;
         background: var(--input);
         color: var(--text);
         outline: none;
+        width: 190px;
+        text-transform: uppercase;
       }
       input::placeholder { color: rgba(255,255,255,0.45); }
 
+      /* ---- Eval bar ---- */
+      .evalWrap {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .evalBar {
+        height: 18px;
+        border-radius: 999px;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(255,255,255,0.08);
+        position: relative;
+      }
+
+      .evalWhiteFill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 50%;
+        background: rgba(255,255,255,0.92);
+      }
+
+      .evalBlackFill {
+        position: absolute;
+        inset: 0 0 0 auto;
+        width: 50%;
+        background: rgba(0,0,0,0.85);
+      }
+
+      .evalTick {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 2px;
+        background: rgba(255,255,255,0.25);
+        transform: translateX(-1px);
+      }
+
+      .evalNum {
+        font-size: 22px;
+        font-weight: 950;
+        letter-spacing: -0.02em;
+        padding: 6px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.14);
+        background: rgba(0,0,0,0.28);
+        color: rgba(255,255,255,0.95);
+        text-shadow: 0 1px 0 rgba(0,0,0,0.6);
+        min-width: 86px;
+        text-align: right;
+      }
+
+      .evalHint {
+        margin-top: 8px;
+        font-size: 12px;
+        color: rgba(255,255,255,0.55);
+      }
+
+      /* ---- Feed ---- */
       .feed {
         height: 260px;
         overflow: auto;
         border-radius: 14px;
         border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.05);
+        background: rgba(255,255,255,0.05);
         padding: 10px;
       }
 
@@ -190,8 +257,9 @@
       }
 
       .sys .bubble { color: rgba(255,255,255,0.78); }
-      .err .bubble { color: var(--bad); font-weight: 800; }
-      .ok .bubble { color: var(--ok); font-weight: 800; }
+      .err .bubble { color: var(--bad); font-weight: 950; }
+      .ok .bubble { color: var(--good); font-weight: 950; }
+      .warn .bubble { color: var(--warn); font-weight: 950; }
 
       .chatRow {
         display: grid;
@@ -212,16 +280,14 @@
         text-transform: none;
       }
 
-      @media (max-width: 960px) {
+      @media (max-width: 980px) {
         .wrap { flex-direction: column; align-items: center; }
         #board {
           width: min(92vw, 520px);
           height: min(92vw, 520px);
           flex: 0 0 auto;
-          min-width: 0;
-          min-height: 0;
         }
-        .side { width: min(92vw, 640px); }
+        .side { width: min(92vw, 720px); }
       }
     </style>
   </head>
@@ -229,7 +295,7 @@
   <body>
     <div class="wrap">
       <div id="board">
-        <div class="boardFallback">loading…</div>
+        <div class="fallback">loading…</div>
       </div>
 
       <div class="side">
@@ -237,13 +303,28 @@
           <div class="titleRow">
             <div>
               <div class="title">Live Eval Chess</div>
-              <div class="sub">Multiplayer MVP (no hints, no undo)</div>
+              <div class="sub">Play chess with the truth on the screen.</div>
             </div>
+            <div class="sub" id="engineStatus">engine: …</div>
           </div>
 
-          <div style="height: 10px"></div>
+          <div style="height: 12px"></div>
+
+          <div class="evalWrap">
+            <div class="evalBar" aria-label="evaluation bar">
+              <div class="evalWhiteFill" id="evalWhiteFill"></div>
+              <div class="evalBlackFill" id="evalBlackFill"></div>
+              <div class="evalTick"></div>
+            </div>
+            <div class="evalNum" id="evalNum">+0.0</div>
+          </div>
+
+          <div class="evalHint">No hints. No undo. Only the eval.</div>
+
+          <div style="height: 12px"></div>
 
           <div class="row">
+            <span class="pill">Mode <b id="mode">idle</b></span>
             <span class="pill">Room <b id="room">—</b></span>
             <span class="pill">Role <b id="role">—</b></span>
             <span class="pill">Players <b id="players">0</b></span>
@@ -252,7 +333,8 @@
 
         <div class="card">
           <div class="row">
-            <button id="playOnline">Play Online</button>
+            <button class="primary" id="playOnline">Play Online</button>
+            <button id="cancelSearch" disabled>Cancel</button>
             <button id="restart" disabled>Restart</button>
           </div>
 
@@ -275,26 +357,29 @@
           </div>
 
           <div class="sub" style="margin-top: 10px">
-            If you see an error message here, paste it to me and we’ll fix it instantly.
+            Tip: share a room link for friend testing. “Play Online” is matchmaking.
           </div>
         </div>
       </div>
     </div>
 
-    <!-- MUST be served by your Express server (matches server Socket.IO version) -->
+    <!-- Socket.IO client served by your server (version matches server) -->
     <script src="/socket.io/socket.io.js"></script>
 
-    <!-- chess.js for legality + FEN -->
+    <!-- chess.js for legality + fen/pgn -->
     <script src="https://cdn.jsdelivr.net/npm/chess.js@0.10.3/chess.min.js"></script>
 
     <script type="module">
       import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
 
+      // ---------- DOM ----------
+      const modeEl = document.getElementById("mode");
       const roomEl = document.getElementById("room");
       const roleEl = document.getElementById("role");
       const playersEl = document.getElementById("players");
 
       const playOnlineBtn = document.getElementById("playOnline");
+      const cancelBtn = document.getElementById("cancelSearch");
       const restartBtn = document.getElementById("restart");
       const createBtn = document.getElementById("create");
       const joinBtn = document.getElementById("join");
@@ -305,16 +390,21 @@
       const chatInput = document.getElementById("chatInput");
       const sendChatBtn = document.getElementById("sendChat");
 
-      function addMessage({ kind = "sys", at, from, text }) {
+      const engineStatusEl = document.getElementById("engineStatus");
+      const evalNumEl = document.getElementById("evalNum");
+      const evalWhiteFill = document.getElementById("evalWhiteFill");
+      const evalBlackFill = document.getElementById("evalBlackFill");
+
+      // ---------- Feed helpers ----------
+      const ts = () => new Date().toTimeString().slice(0, 8);
+
+      function addMsg(kind, who, text) {
         const row = document.createElement("div");
         row.className = `msg ${kind}`;
 
         const meta = document.createElement("div");
         meta.className = "meta";
-        meta.textContent =
-          kind === "chat"
-            ? `${at} · ${from}`
-            : `${at} · sys`;
+        meta.textContent = kind === "chat" ? `${ts()} · ${who}` : `${ts()} · sys`;
 
         const bubble = document.createElement("div");
         bubble.className = "bubble";
@@ -326,67 +416,198 @@
         feedEl.scrollTop = feedEl.scrollHeight;
       }
 
-      function ts() {
-        return new Date().toTimeString().slice(0, 8);
-      }
+      const sys = (t) => addMsg("sys", "sys", t);
+      const ok = (t) => addMsg("ok", "sys", t);
+      const warn = (t) => addMsg("warn", "sys", t);
+      const err = (t) => addMsg("err", "sys", t);
 
-      function sys(text) {
-        addMessage({ kind: "sys", at: ts(), text });
-      }
-      function ok(text) {
-        addMessage({ kind: "ok", at: ts(), text });
-      }
-      function err(text) {
-        addMessage({ kind: "err", at: ts(), text });
-      }
+      // Never blank-screen again
+      window.addEventListener("error", (e) => err(`JS error: ${e.message || e.error || "unknown"}`));
+      window.addEventListener("unhandledrejection", (e) => err(`Promise error: ${e.reason?.message || e.reason || "unknown"}`));
 
-      // If anything crashes, print it IN the feed instead of blank screen.
-      window.addEventListener("error", (e) => {
-        err(`JS error: ${e.message || e.error || "unknown"}`);
-      });
-      window.addEventListener("unhandledrejection", (e) => {
-        err(`Promise error: ${e.reason?.message || e.reason || "unknown"}`);
-      });
-
-      // Make sure socket.io client actually exists
-      if (typeof io === "undefined") {
-        err("Socket.IO client not loaded. /socket.io/socket.io.js failed to load.");
-        throw new Error("io is undefined");
-      }
-
-      // Chess + board
+      // ---------- State ----------
       const game = new Chess();
+      let myRole = "spectator"; // "white" | "black" | "spectator"
       let currentRoom = null;
-      let myRole = "spectator"; // white | black | spectator
+      let mode = "idle"; // idle | searching | matched
+      let engineReady = false;
 
-      const board = new Chessboard(document.getElementById("board"), {
+      function setMode(m) {
+        mode = m;
+        modeEl.textContent = m;
+        const searching = m === "searching";
+
+        playOnlineBtn.disabled = searching;
+        cancelBtn.disabled = !searching;
+
+        // while searching, you can't move
+        if (searching) restartBtn.disabled = true;
+      }
+
+      function updateTopPills(players = null) {
+        roomEl.textContent = currentRoom || "—";
+        roleEl.textContent = myRole || "—";
+        if (players !== null) playersEl.textContent = String(players);
+        copyBtn.disabled = !currentRoom;
+        restartBtn.disabled = !(myRole === "white" || myRole === "black");
+      }
+
+      // ---------- Board ----------
+      const boardEl = document.getElementById("board");
+      const board = new Chessboard(boardEl, {
         position: FEN.start,
         responsive: true,
         assetsUrl: "/cm-assets/",
         orientation: COLOR.white,
       });
 
-      // remove fallback once board exists
-      const fb = document.querySelector(".boardFallback");
+      // remove fallback
+      const fb = document.querySelector(".fallback");
       if (fb) fb.remove();
 
       function setOrientation() {
         board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
       }
 
-      function updateUi() {
-        roomEl.textContent = currentRoom || "—";
-        roleEl.textContent = myRole || "—";
-        restartBtn.disabled = !(myRole === "white" || myRole === "black");
-        copyBtn.disabled = !currentRoom;
-      }
-
-      function resetGameLocal() {
+      function resetLocalGame() {
         game.reset();
         board.setPosition(game.fen());
+        requestEval(game.fen());
       }
 
-      // Socket connection (ONE socket per page)
+      function canMoveNow() {
+        const turn = game.turn(); // "w"|"b"
+        if (myRole === "white") return turn === "w";
+        if (myRole === "black") return turn === "b";
+        return false;
+      }
+
+      // ---------- Stockfish WASM (eval only) ----------
+      // We run Stockfish in a Web Worker created from CDN script.
+      // NO bestmove used, only "info score cp/mate".
+      let sf = null;
+      let evalJob = 0;
+
+      function fmtEval(cp) {
+        const v = cp / 100;
+        const sign = v > 0 ? "+" : "";
+        return sign + v.toFixed(1);
+      }
+
+      function setEvalBarFromCp(cp) {
+        // Normalize to +/- 600cp (6 pawns) for UI. Clamp hard.
+        const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+        const c = clamp(cp, -600, 600);
+
+        // White share in [0..100]
+        const whitePct = 50 + (c / 12); // 600cp -> +50 -> 100%
+        const w = clamp(whitePct, 0, 100);
+        const b = 100 - w;
+
+        evalWhiteFill.style.width = `${w}%`;
+        evalBlackFill.style.width = `${b}%`;
+
+        evalNumEl.textContent = fmtEval(cp);
+      }
+
+      function initStockfish() {
+        // Stockfish worker script (cdn). This is the common browser bundle.
+        // If this URL ever changes, we’ll swap it, but it’s a solid default.
+        const url = "https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish.js";
+
+        sf = new Worker(url);
+        engineStatusEl.textContent = "engine: starting…";
+
+        sf.onmessage = (e) => {
+          const line = (e.data || "").toString();
+
+          if (!engineReady && (line.includes("uciok") || line.includes("readyok"))) {
+            // We'll set ready after we send isready (below)
+          }
+
+          // Parse eval lines: "info depth ... score cp 34"
+          if (line.startsWith("info") && line.includes("score")) {
+            // ignore if not latest job
+            if (!currentEvalAccepting) return;
+
+            const mCp = line.match(/score cp (-?\d+)/);
+            const mMate = line.match(/score mate (-?\d+)/);
+
+            if (mMate) {
+              // Represent mate as a huge score for bar + show "M#"
+              const mateN = parseInt(mMate[1], 10);
+              const mateText = (mateN > 0 ? "+M" : "-M") + Math.abs(mateN);
+              evalNumEl.textContent = mateText;
+
+              // push bar hard to the winning side
+              setEvalBarFromCp(mateN > 0 ? 600 : -600);
+              return;
+            }
+
+            if (mCp) {
+              const cp = parseInt(mCp[1], 10);
+              // Stockfish score is from side-to-move POV in many builds; we want White POV.
+              // Convert to White POV using whose turn it is in our game state.
+              // If it's Black to move, invert.
+              const whitePov = game.turn() === "w" ? cp : -cp;
+              setEvalBarFromCp(whitePov);
+            }
+          }
+
+          // Useful for debugging
+          if (line === "uciok") {
+            sf.postMessage("isready");
+          }
+          if (line === "readyok") {
+            engineReady = true;
+            engineStatusEl.textContent = "engine: ready";
+            // initial eval
+            requestEval(game.fen());
+          }
+        };
+
+        sf.onerror = (e) => {
+          console.error("stockfish worker error", e);
+          engineStatusEl.textContent = "engine: error";
+          err("Stockfish failed to start (worker error).");
+        };
+
+        // init uci
+        sf.postMessage("uci");
+      }
+
+      let currentEvalAccepting = false;
+
+      function requestEval(fen) {
+        if (!sf || !engineReady) return;
+
+        // cancel prior "accepting" windows
+        evalJob += 1;
+        const jobId = evalJob;
+
+        currentEvalAccepting = true;
+
+        // Set a short timeout so stale eval lines don't keep updating forever
+        setTimeout(() => {
+          if (jobId === evalJob) currentEvalAccepting = false;
+        }, 2500);
+
+        sf.postMessage("stop");
+        sf.postMessage("ucinewgame");
+        sf.postMessage("position fen " + fen);
+        // Depth tuned for responsiveness. You can raise to 14/16 later.
+        sf.postMessage("go depth 12");
+      }
+
+      initStockfish();
+      setEvalBarFromCp(0);
+
+      // ---------- Socket ----------
+      if (typeof io === "undefined") {
+        err("Socket.IO client did not load. /socket.io/socket.io.js failed.");
+        throw new Error("io is undefined");
+      }
+
       const socket = io({
         transports: ["polling", "websocket"],
         reconnection: true,
@@ -400,73 +621,106 @@
         console.error("connect_error", e);
         err(`connect_error: ${e?.message || e || "unknown"}`);
       });
-      socket.on("disconnect", (reason) => sys(`disconnected: ${reason}`));
+      socket.on("disconnect", (reason) => warn(`disconnected: ${reason}`));
 
-      // Server events (match your CommonJS server.js)
       socket.on("status", (m) => sys(m?.msg || "status"));
-      socket.on("room:created", (m) => {
-        sys(`room created: ${m.room}`);
+
+      socket.on("queue:status", ({ state }) => {
+        if (state === "searching") setMode("searching");
+        else setMode("idle");
       });
 
-      socket.on("room:joined", (m) => {
-        currentRoom = m.room;
-        myRole = m.role === "w" ? "white" : "black";
-        playersEl.textContent = m.players ?? "—";
+      socket.on("match:found", ({ room, role }) => {
+        // role is "w"|"b"
+        currentRoom = room;
+        myRole = role === "w" ? "white" : "black";
+        setMode("matched");
+        updateTopPills(2);
         setOrientation();
-        resetGameLocal();
-        updateUi();
+        resetLocalGame();
 
-        // persist room in URL
+        // set room in URL for easy share/rejoin
         const u = new URL(location.href);
         u.searchParams.set("room", currentRoom);
         history.replaceState({}, "", u);
 
-        ok(`joined ${currentRoom} as ${myRole}`);
+        ok(`match found — you are ${myRole}`);
       });
 
-      socket.on("room:update", (m) => {
-        playersEl.textContent = m.players ?? playersEl.textContent;
+      socket.on("room:created", ({ room }) => {
+        currentRoom = room;
+        // creator becomes white in server.js
+        myRole = "white";
+        setMode("matched");
+        updateTopPills(1);
+        setOrientation();
+        resetLocalGame();
+
+        const u = new URL(location.href);
+        u.searchParams.set("room", currentRoom);
+        history.replaceState({}, "", u);
+
+        ok(`room created: ${room}`);
       });
 
-      socket.on("game:start", () => {
-        ok("game started");
+      socket.on("room:joined", ({ room, role, players }) => {
+        currentRoom = room;
+        myRole = role === "w" ? "white" : "black";
+        setMode("matched");
+        updateTopPills(players ?? null);
+        setOrientation();
+        resetLocalGame();
+
+        const u = new URL(location.href);
+        u.searchParams.set("room", currentRoom);
+        history.replaceState({}, "", u);
+
+        ok(`joined ${room} as ${myRole}`);
       });
 
-      // Opponent move relay (your server sends { move, fen, pgn })
-      socket.on("move", ({ move, fen }) => {
+      socket.on("room:update", ({ players }) => {
+        if (typeof players === "number") playersEl.textContent = String(players);
+      });
+
+      socket.on("game:start", () => ok("game started"));
+
+      socket.on("opponent:left", () => {
+        warn("opponent left");
+        // you stay in room but game is effectively over.
+      });
+
+      socket.on("move", ({ fen }) => {
         if (!fen) return;
+        // Apply opponent move to local game
         game.load(fen);
         board.setPosition(game.fen());
-        sys(`opponent moved`);
+        requestEval(game.fen());
+        sys("opponent moved");
       });
 
+      // Chat stream from server.js: {kind:"sys"| "user", at, from, text}
       socket.on("chat", (m) => {
-        addMessage({
-          kind: "chat",
-          at: ts(),
-          from: m.from === socket.id ? "you" : "opponent",
-          text: m.text || "",
-        });
+        if (!m) return;
+        if (m.kind === "sys") {
+          sys(m.text || "");
+        } else {
+          const who = m.from || "player";
+          addMsg("chat", who, m.text || "");
+        }
       });
 
-      // Input handling
-      function canMove() {
-        const turn = game.turn(); // 'w' or 'b'
-        if (myRole === "white") return turn === "w";
-        if (myRole === "black") return turn === "b";
-        return false;
-      }
-
+      // ---------- Move input ----------
       board.enableMoveInput((event) => {
-        if (!(myRole === "white" || myRole === "black")) return false;
         if (!currentRoom) return false;
+        if (!(myRole === "white" || myRole === "black")) return false;
+        if (mode !== "matched") return false;
 
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
-          return canMove();
+          return canMoveNow();
         }
 
         if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
-          if (!canMove()) {
+          if (!canMoveNow()) {
             sys("not your turn");
             board.setPosition(game.fen());
             return false;
@@ -483,9 +737,9 @@
           }
 
           board.setPosition(game.fen());
+          requestEval(game.fen());
 
           socket.emit("move", {
-            room: currentRoom,
             move: { from, to, promotion: "q" },
             fen: game.fen(),
             pgn: game.pgn(),
@@ -497,13 +751,21 @@
         return true;
       });
 
-      // Buttons
+      // ---------- Buttons ----------
       playOnlineBtn.onclick = () => {
-        sys("creating room…");
-        socket.emit("room:create");
+        sys("searching for opponent…");
+        setMode("searching");
+        socket.emit("queue:join");
+      };
+
+      cancelBtn.onclick = () => {
+        socket.emit("queue:cancel");
+        setMode("idle");
       };
 
       createBtn.onclick = () => {
+        setMode("idle");
+        socket.emit("queue:cancel");
         sys("creating room…");
         socket.emit("room:create");
       };
@@ -511,13 +773,15 @@
       joinBtn.onclick = () => {
         const code = roomInput.value.trim().toUpperCase();
         if (!code) return;
+        setMode("idle");
+        socket.emit("queue:cancel");
         sys(`joining ${code}…`);
         socket.emit("room:join", { room: code });
       };
 
       restartBtn.onclick = () => {
-        resetGameLocal();
-        sys("restarted locally (MVP)");
+        resetLocalGame();
+        sys("restarted (local)");
       };
 
       copyBtn.onclick = async () => {
@@ -534,7 +798,7 @@
           sys("join a room first");
           return;
         }
-        socket.emit("chat", { room: currentRoom, text: t });
+        socket.emit("chat:send", { text: t });
         chatInput.value = "";
       }
 
@@ -546,7 +810,7 @@
         }
       });
 
-      // Auto-join room from URL
+      // Auto-join room from URL (friend link testing)
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) {
         const code = roomParam.trim().toUpperCase();
@@ -554,7 +818,9 @@
         socket.emit("room:join", { room: code });
       }
 
-      updateUi();
+      // initial UI
+      setMode("idle");
+      updateTopPills(0);
       sys("ready");
     </script>
   </body>
