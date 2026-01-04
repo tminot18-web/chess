@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess — Online</title>
 
-    <!-- ✅ cm-chessboard CSS (v8, works with ESM import below) -->
+    <!-- cm-chessboard CSS (v8) -->
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/cm-chessboard@8/styles/cm-chessboard.css"
@@ -17,9 +17,7 @@
         --text: #e7eefc;
         --muted: #a7b4cf;
         --line: rgba(255, 255, 255, 0.08);
-
-        /* ✅ “halve chat space” — slim sidebar */
-        --sidebarW: 320px;
+        --sidebarW: 320px; /* slim chat */
         --gap: 14px;
         --pad: 14px;
       }
@@ -29,7 +27,7 @@
       html, body {
         height: 100%;
         margin: 0;
-        overflow: hidden; /* ✅ no page scroll */
+        overflow: hidden;
       }
 
       body {
@@ -41,7 +39,6 @@
         color: var(--text);
       }
 
-      /* ✅ Big board left, slim right */
       .wrap {
         height: 100vh;
         display: grid;
@@ -60,7 +57,7 @@
         min-height: 0;
       }
 
-      /* ---------- LEFT: BOARD FILLS SPACE ---------- */
+      /* LEFT */
       .left {
         display: grid;
         grid-template-rows: auto 1fr;
@@ -75,16 +72,8 @@
         gap: 12px;
       }
 
-      .brand h1 {
-        font-size: 16px;
-        margin: 0;
-        letter-spacing: 0.2px;
-      }
-
-      .brand span {
-        font-size: 12px;
-        color: var(--muted);
-      }
+      .brand h1 { font-size: 16px; margin: 0; letter-spacing: 0.2px; }
+      .brand span { font-size: 12px; color: var(--muted); }
 
       .pills { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
       .pill {
@@ -102,7 +91,6 @@
         place-items: center;
       }
 
-      /* ✅ Guaranteed square pixel size so the board *always* paints */
       #board {
         width: min(
           calc(100vw - var(--sidebarW) - (var(--pad) * 2) - var(--gap) - 24px),
@@ -116,7 +104,7 @@
         max-height: 100%;
       }
 
-      /* ---------- RIGHT: CONTROLS TOP-RIGHT + CHAT BELOW ---------- */
+      /* RIGHT */
       .right {
         display: grid;
         grid-template-rows: auto 1fr;
@@ -167,7 +155,6 @@
       .row { display: flex; gap: 8px; }
       .row > * { flex: 1; }
 
-      /* Eval: compact */
       .evalWrap {
         display: grid;
         grid-template-columns: 18px 1fr;
@@ -194,7 +181,6 @@
       .evalSub { font-size: 12px; color: var(--muted); line-height: 1.4; }
       .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
 
-      /* Chat */
       .chatCard {
         display: grid;
         grid-template-rows: auto 1fr auto;
@@ -246,7 +232,6 @@
 
   <body>
     <div class="wrap">
-      <!-- LEFT: BOARD -->
       <div class="card left">
         <div class="topbar">
           <div class="brand">
@@ -265,7 +250,6 @@
         </div>
       </div>
 
-      <!-- RIGHT: CONTROLS TOP-RIGHT + CHAT BELOW -->
       <div class="right">
         <div class="card">
           <div class="panelTitle">Controls</div>
@@ -317,13 +301,14 @@
       </div>
     </div>
 
-    <!-- socket.io is still classic script (fine) -->
     <script src="/socket.io/socket.io.js"></script>
 
-    <!-- ✅ Everything else now runs as an ES module -->
     <script type="module">
       import { Chessboard, INPUT_EVENT_TYPE } from "https://cdn.jsdelivr.net/npm/cm-chessboard@8/src/Chessboard.js";
       import { Chess } from "https://cdn.jsdelivr.net/npm/chess.js@1.0.0/dist/esm/chess.js";
+
+      // ✅ This fixes your 404: it tells cm-chessboard where its SVG pieces live
+      const ASSETS_URL = "https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/";
 
       // DOM
       const modePill = document.getElementById("modePill");
@@ -391,7 +376,8 @@
 
       const board = new Chessboard(boardEl, {
         position: game.fen(),
-        style: { showCoordinates: true }
+        assetsUrl: ASSETS_URL, // ✅ THE FIX
+        style: { showCoordinates: true },
       });
 
       function setOrientation() {
@@ -402,7 +388,6 @@
       function forceBoardRender() {
         try { board.setPosition(game.fen()); } catch {}
       }
-
       window.addEventListener("load", () => {
         requestAnimationFrame(() => {
           forceBoardRender();
@@ -435,7 +420,7 @@
         return false;
       }
 
-      // Stockfish (browser worker)
+      // Stockfish worker
       let sf = null;
       let sfReady = false;
 
@@ -704,7 +689,6 @@
       sendBtn.onclick = sendChat;
       chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
 
-      // auto-join from URL
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) {
         const code = roomParam.trim().toUpperCase();
@@ -712,7 +696,6 @@
         socket.emit("room:join", { room: code });
       }
 
-      // init
       setMode("idle");
       updateTopPills(0);
       resetLocalGame();
