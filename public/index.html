@@ -183,9 +183,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chess.js@0.10.3/chess.min.js"></script>
-
-    <!-- IMPORTANT: stockfish.wasm expects stockfish.js/stockfish.worker.js/stockfish.wasm in SAME dir -->
-    <script src="/engine/stockfish.js"></script>
   </head>
 
   <body>
@@ -331,7 +328,6 @@
       let currentRoom = null;
       let myRole = null; // "white" | "black"
       let mode = "idle"; // idle | searching | matched
-      let engineReady = false;
 
       function setMode(next) {
         mode = next;
@@ -399,7 +395,7 @@
         const label = typeof opts.label === "string" ? opts.label : null;
         const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
         const c = clamp(cp, -600, 600);
-        const whitePct = 50 + c / 12; // 0..100 mapping
+        const whitePct = 50 + c / 12;
         const w = clamp(whitePct, 0, 100);
         const b = 100 - w;
         evalWhiteFill.style.width = `${w}%`;
@@ -408,62 +404,61 @@
       }
       setEvalBarFromCp(0);
 
-      // ---------- Stockfish (stockfish.wasm official API) ----------
+      // ---------- Stockfish (UCI JS worker: no SharedArrayBuffer needed) ----------
       let sf = null;
+      let engineReady = false;
       let evalJob = 0;
       let accepting = false;
 
       function initStockfish() {
         engineStatusEl.textContent = "starting…";
-
-        if (typeof window.Stockfish !== "function") {
+        try {
+          sf = new Worker("/engine/stockfish-uci.js");
+        } catch (e) {
           engineStatusEl.textContent = "error";
-          err("Stockfish() not found. Make sure /engine/stockfish.js is loading.");
+          err("Stockfish worker failed to construct: " + (e?.message || e));
           return;
         }
 
-        window.Stockfish()
-          .then((engine) => {
-            sf = engine;
+        sf.onmessage = (e) => {
+          const line = (e.data || "").toString();
 
-            sf.addMessageListener((line) => {
-              if (line === "uciok") sf.postMessage("isready");
-              if (line === "readyok") {
-                engineReady = true;
-                engineStatusEl.textContent = "ready";
-                sys("engine ready");
-                requestEval(game.fen());
-                return;
-              }
+          if (line === "uciok") sf.postMessage("isready");
+          if (line === "readyok") {
+            engineReady = true;
+            engineStatusEl.textContent = "ready";
+            sys("engine ready");
+            requestEval(game.fen());
+            return;
+          }
 
-              if (!accepting) return;
+          if (!accepting) return;
 
-              if (typeof line === "string" && line.startsWith("info") && line.includes("score")) {
-                const mMate = line.match(/score mate (-?\d+)/);
-                if (mMate) {
-                  const mateN = parseInt(mMate[1], 10);
-                  const mateText = (mateN > 0 ? "+M" : "-M") + Math.abs(mateN);
-                  setEvalBarFromCp(mateN > 0 ? 600 : -600, { label: mateText });
-                  return;
-                }
+          if (line.startsWith("info") && line.includes("score")) {
+            const mMate = line.match(/score mate (-?\d+)/);
+            if (mMate) {
+              const mateN = parseInt(mMate[1], 10);
+              const mateText = (mateN > 0 ? "+M" : "-M") + Math.abs(mateN);
+              setEvalBarFromCp(mateN > 0 ? 600 : -600, { label: mateText });
+              return;
+            }
+            const mCp = line.match(/score cp (-?\d+)/);
+            if (mCp) {
+              const cp = parseInt(mCp[1], 10);
+              // show eval in White POV
+              const whitePov = game.turn() === "w" ? cp : -cp;
+              setEvalBarFromCp(whitePov);
+            }
+          }
+        };
 
-                const mCp = line.match(/score cp (-?\d+)/);
-                if (mCp) {
-                  const cp = parseInt(mCp[1], 10);
-                  // keep displayed eval in White POV
-                  const whitePov = game.turn() === "w" ? cp : -cp;
-                  setEvalBarFromCp(whitePov);
-                }
-              }
-            });
+        sf.onerror = (e) => {
+          engineStatusEl.textContent = "error";
+          err("Stockfish worker error (see console).");
+          console.error("stockfish worker error", e);
+        };
 
-            sf.postMessage("uci");
-          })
-          .catch((e) => {
-            engineStatusEl.textContent = "error";
-            err("Stockfish failed to start: " + (e?.message || String(e)));
-            console.error("Stockfish init error:", e);
-          });
+        sf.postMessage("uci");
       }
 
       function requestEval(fen) {
