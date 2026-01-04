@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess — Online</title>
 
-    <!-- ✅ Correct v8 CSS location (this is the big fix) -->
+    <!-- ✅ Stable UMD cm-chessboard v7 (CSS + JS) -->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/styles/cm-chessboard.css"
+      href="https://cdn.jsdelivr.net/npm/cm-chessboard@7.11.0/cm-chessboard.css"
     />
 
     <style>
@@ -27,7 +27,7 @@
       html, body {
         height: 100%;
         margin: 0;
-        overflow: hidden;
+        overflow: hidden; /* ✅ no scrolling */
       }
 
       body {
@@ -91,7 +91,7 @@
         place-items: center;
       }
 
-      /* ✅ Keep board big + square */
+      /* ✅ Big square board always visible */
       #board {
         width: min(
           calc(100vw - var(--sidebarW) - (var(--pad) * 2) - var(--gap) - 24px),
@@ -103,6 +103,8 @@
         );
         max-width: 100%;
         max-height: 100%;
+        border-radius: 12px;
+        overflow: hidden;
       }
 
       /* RIGHT */
@@ -247,8 +249,7 @@
         </div>
 
         <div id="boardStage">
-          <!-- ✅ add cm-chessboard class so CSS hits -->
-          <div id="board" class="cm-chessboard"></div>
+          <div id="board"></div>
         </div>
       </div>
 
@@ -303,13 +304,19 @@
       </div>
     </div>
 
+    <!-- socket.io stays as-is -->
     <script src="/socket.io/socket.io.js"></script>
 
-    <script type="module">
-      import { Chessboard, INPUT_EVENT_TYPE } from "https://cdn.jsdelivr.net/npm/cm-chessboard@8/src/Chessboard.js";
-      import { Chess } from "https://cdn.jsdelivr.net/npm/chess.js@1.0.0/dist/esm/chess.js";
+    <!-- ✅ cm-chessboard v7 UMD -->
+    <script src="https://cdn.jsdelivr.net/npm/cm-chessboard@7.11.0/cm-chessboard.min.js"></script>
 
-      const ASSETS_URL = "https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/";
+    <!-- ✅ chess.js UMD (no “export” token problems) -->
+    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.13.4/chess.min.js"></script>
+
+    <script>
+      // Globals from UMD builds:
+      // - window.Chessboard, window.INPUT_EVENT_TYPE (cm-chessboard)
+      // - window.Chess (chess.js)
 
       const modePill = document.getElementById("modePill");
       const roomPill = document.getElementById("roomPill");
@@ -369,13 +376,16 @@
       }
       function sys(text) { addMsg("sys", "sys", text); }
 
+      // Chess + board (v7 stable)
       const game = new Chess();
       const boardEl = document.getElementById("board");
 
       const board = new Chessboard(boardEl, {
         position: game.fen(),
-        assetsUrl: ASSETS_URL,
-        style: { showCoordinates: true },
+        style: {
+          cssClass: "default",
+          showCoordinates: true
+        }
       });
 
       function setOrientation() {
@@ -384,15 +394,8 @@
       }
 
       function forceBoardRender() {
-        try { board.setPosition(game.fen()); } catch {}
+        try { board.setPosition(game.fen()); } catch (e) {}
       }
-      window.addEventListener("load", () => {
-        requestAnimationFrame(() => {
-          forceBoardRender();
-          setTimeout(forceBoardRender, 50);
-          setTimeout(forceBoardRender, 200);
-        });
-      });
       window.addEventListener("resize", () => requestAnimationFrame(forceBoardRender));
 
       function setEvalBarFromCp(whiteCp) {
@@ -418,6 +421,7 @@
         return false;
       }
 
+      // Stockfish (browser worker)
       let sf = null;
       let sfReady = false;
 
@@ -475,6 +479,7 @@
         setEvalBarFromCp(whiteCp);
       }
 
+      // Socket
       const socket = io();
       socket.on("connect", () => sys("socket connected"));
 
@@ -596,6 +601,7 @@
         }
       });
 
+      // Move input (v7 API)
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
@@ -635,6 +641,7 @@
         return true;
       });
 
+      // Buttons
       playOnlineBtn.onclick = () => {
         sys("Play Online clicked");
         clearSession();
@@ -683,6 +690,7 @@
       sendBtn.onclick = sendChat;
       chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
 
+      // auto-join from URL
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) {
         const code = roomParam.trim().toUpperCase();
@@ -690,6 +698,7 @@
         socket.emit("room:join", { room: code });
       }
 
+      // init
       setMode("idle");
       updateTopPills(0);
       resetLocalGame();
