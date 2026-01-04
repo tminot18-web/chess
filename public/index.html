@@ -14,10 +14,8 @@
     <style>
       :root {
         --bg: #0b0f17;
-        --panel: #101827;
         --text: #e7eefc;
         --muted: #a7b4cf;
-        --accent: #7dd3fc;
         --line: rgba(255, 255, 255, 0.08);
       }
 
@@ -26,21 +24,23 @@
       html, body {
         height: 100%;
         margin: 0;
-        overflow: hidden; /* ✅ no page scroll */
+        overflow: hidden; /* ✅ page never scrolls */
       }
 
       body {
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-        background: radial-gradient(800px 400px at 20% 0%, rgba(125, 211, 252, 0.13), transparent 60%),
-                    radial-gradient(600px 300px at 80% 10%, rgba(34, 197, 94, 0.10), transparent 60%),
-                    var(--bg);
+        background:
+          radial-gradient(800px 400px at 20% 0%, rgba(125, 211, 252, 0.13), transparent 60%),
+          radial-gradient(600px 300px at 80% 10%, rgba(34, 197, 94, 0.10), transparent 60%),
+          var(--bg);
         color: var(--text);
       }
 
+      /* ✅ Board should be the star: give left column most width, cap chat */
       .wrap {
         height: 100vh;
         display: grid;
-        grid-template-columns: 520px 1fr;
+        grid-template-columns: minmax(720px, 1fr) 420px; /* ✅ board dominates */
         gap: 14px;
         padding: 14px;
       }
@@ -51,21 +51,7 @@
         border-radius: 14px;
         padding: 12px;
         box-shadow: 0 10px 30px rgba(0,0,0,0.25);
-        overflow: hidden; /* ✅ keep content contained */
-        min-height: 0;    /* ✅ allow internal scroll children */
-      }
-
-      .left {
-        display: grid;
-        grid-template-rows: auto 1fr auto;
-        gap: 10px;
-        min-height: 0;
-      }
-
-      .right {
-        display: grid;
-        grid-template-rows: auto 1fr auto;
-        gap: 10px;
+        overflow: hidden;
         min-height: 0;
       }
 
@@ -73,19 +59,15 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 8px;
+        gap: 12px;
       }
 
-      .brand {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
       .brand h1 {
         font-size: 16px;
         margin: 0;
         letter-spacing: 0.2px;
       }
+
       .brand span {
         font-size: 12px;
         color: var(--muted);
@@ -101,7 +83,15 @@
         background: rgba(0,0,0,0.12);
       }
 
-      /* ✅ Board fits viewport: square, never forces scroll */
+      /* ✅ Left panel: board gets max space, controls are compact */
+      .left {
+        display: grid;
+        grid-template-rows: auto 1fr auto; /* topbar, board, controls */
+        gap: 12px;
+        min-height: 0;
+      }
+
+      /* ✅ Give the board a real, stable pixel box */
       #boardWrap {
         min-height: 0;
         display: grid;
@@ -109,16 +99,19 @@
       }
 
       #board {
-        width: 100%;
-        max-width: 520px;
+        /* Use height-first sizing so it never collapses */
+        height: min(calc(100vh - 220px), 78vh); /* ✅ stable pixel height */
+        width: auto;
         aspect-ratio: 1 / 1;
-        max-height: calc(100vh - 220px); /* topbar + controls area */
+        max-width: 100%;
+        max-height: 100%;
       }
 
       .controls {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
+        grid-template-columns: 1.1fr 0.9fr; /* board-related controls bigger, eval slightly smaller */
+        gap: 12px;
+        align-items: stretch;
       }
 
       .block {
@@ -126,7 +119,6 @@
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px;
-        overflow: hidden;
         min-height: 0;
       }
 
@@ -139,6 +131,7 @@
       }
 
       button, input { font: inherit; }
+
       button {
         cursor: pointer;
         border: 1px solid var(--line);
@@ -173,7 +166,7 @@
       }
       .evalBar {
         width: 22px;
-        height: min(240px, 28vh); /* ✅ scales down to fit */
+        height: 160px; /* ✅ smaller so board stays dominant */
         border-radius: 999px;
         border: 1px solid var(--line);
         overflow: hidden;
@@ -187,11 +180,6 @@
         height: 50%;
         background: linear-gradient(180deg, rgba(34,197,94,0.9), rgba(34,197,94,0.55));
       }
-      .evalText {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
       .evalText .big {
         font-size: 28px;
         letter-spacing: 0.2px;
@@ -202,7 +190,14 @@
         line-height: 1.4;
       }
 
-      /* ✅ Chat fills remaining height and scrolls internally */
+      /* ✅ Right panel: compact chat, internal scroll only */
+      .right {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 10px;
+        min-height: 0;
+      }
+
       .chatLog {
         border: 1px solid var(--line);
         border-radius: 12px;
@@ -242,24 +237,26 @@
         gap: 8px;
       }
       .chatSend input { flex: 1; }
-      .chatSend button { width: 120px; }
+      .chatSend button { width: 110px; }
 
       .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
 
-      @media (max-width: 1020px) {
-        /* ✅ Mobile: stack, still no page scroll, chat scrolls */
+      /* ✅ Responsive: stack but still keep board biggest */
+      @media (max-width: 1150px) {
         .wrap {
           grid-template-columns: 1fr;
-          grid-template-rows: 1fr 1fr;
+          grid-template-rows: 62vh 1fr;
         }
-        #board { max-height: 42vh; }
+        #board {
+          height: min(calc(62vh - 120px), 52vh);
+        }
       }
     </style>
   </head>
 
   <body>
     <div class="wrap">
-      <!-- LEFT: board + controls + eval -->
+      <!-- LEFT -->
       <div class="card left">
         <div class="topbar">
           <div class="brand">
@@ -311,19 +308,15 @@
               </div>
             </div>
             <div style="height: 10px;"></div>
-            <div class="muted">
-              Server is authoritative + supports resync after refresh/disconnect.
-            </div>
+            <div class="muted">Server authoritative + resync after refresh/disconnect.</div>
           </div>
         </div>
       </div>
 
-      <!-- RIGHT: chat (internal scroll) -->
+      <!-- RIGHT -->
       <div class="card right">
         <div class="sectionTitle">Room Feed</div>
-
         <div class="chatLog" id="chatLog"></div>
-
         <div class="chatSend">
           <input id="chatInput" placeholder="Type a message…" />
           <button id="sendBtn">Send</button>
@@ -337,11 +330,11 @@
     <script src="https://unpkg.com/cm-chessboard@3.15.5/cm-chessboard.js"></script>
 
     <script>
-      // ✅ IMPORTANT: cm-chessboard v3 exposes globals under `cmChessboard`
+      // cm-chessboard v3 global
       const { Chessboard, INPUT_EVENT_TYPE } = window.cmChessboard;
       const { Chess } = window;
 
-      // ---------- DOM ----------
+      // DOM
       const modePill = document.getElementById("modePill");
       const roomPill = document.getElementById("roomPill");
       const playersPill = document.getElementById("playersPill");
@@ -362,10 +355,10 @@
       const chatInput = document.getElementById("chatInput");
       const sendBtn = document.getElementById("sendBtn");
 
-      // ---------- State ----------
+      // State
       let currentRoom = null;
       let myRole = null; // "white" | "black"
-      let mode = "idle"; // idle | searching | matched
+      let mode = "idle";
       let moveNumber = 0;
 
       function setMode(m) {
@@ -405,11 +398,9 @@
         chatLog.scrollTop = chatLog.scrollHeight;
       }
 
-      function sys(text) {
-        addMsg("sys", "sys", text);
-      }
+      function sys(text) { addMsg("sys", "sys", text); }
 
-      // ---------- Chess + Board ----------
+      // Chess + board
       const game = new Chess();
       const boardEl = document.getElementById("board");
 
@@ -427,6 +418,13 @@
         else board.setOrientation("white");
       }
 
+      function setEvalBarFromCp(whiteCp) {
+        const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+        const normalized = clamp(whiteCp, -800, 800);
+        const pct = ((normalized + 800) / 1600) * 100;
+        evalFill.style.height = pct + "%";
+      }
+
       function resetLocalGame() {
         game.reset();
         moveNumber = 0;
@@ -436,18 +434,30 @@
       }
 
       function canMoveNow() {
-        const turn = game.turn(); // "w" | "b"
+        const turn = game.turn();
         if (myRole === "white") return turn === "w";
         if (myRole === "black") return turn === "b";
         return false;
       }
 
-      // ✅ Ensure board renders after layout
-      window.requestAnimationFrame(() => {
-        board.setPosition(game.fen());
+      // ✅ Force render after layout + on resize (fixes blank board)
+      function forceBoardRender() {
+        try {
+          board.setPosition(game.fen());
+        } catch {}
+      }
+      window.addEventListener("load", () => {
+        requestAnimationFrame(() => {
+          forceBoardRender();
+          // second tick helps on some browsers/layout timings
+          setTimeout(forceBoardRender, 50);
+        });
+      });
+      window.addEventListener("resize", () => {
+        requestAnimationFrame(forceBoardRender);
       });
 
-      // ---------- Stockfish (browser worker) ----------
+      // Stockfish (browser worker)
       let sf = null;
       let sfReady = false;
 
@@ -493,7 +503,6 @@
       }
 
       function setEvalFromEngine(cp, mate = null) {
-        // approx white POV: flip when black to move
         let whiteCp = cp;
         if (game.turn() === "b") whiteCp = -cp;
 
@@ -509,14 +518,7 @@
         setEvalBarFromCp(whiteCp);
       }
 
-      function setEvalBarFromCp(whiteCp) {
-        const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
-        const normalized = clamp(whiteCp, -800, 800);
-        const pct = ((normalized + 800) / 1600) * 100;
-        evalFill.style.height = pct + "%";
-      }
-
-      // ---------- Socket ----------
+      // Socket
       const socket = io();
 
       socket.on("connect", () => sys("socket connected"));
@@ -546,6 +548,7 @@
         history.replaceState({}, "", u);
 
         sys(`match found: ${room} (${myRole})`);
+        forceBoardRender();
       });
 
       socket.on("room:created", ({ room }) => {
@@ -562,6 +565,7 @@
         history.replaceState({}, "", u);
 
         sys(`room created: ${room}`);
+        forceBoardRender();
       });
 
       socket.on("room:joined", ({ room, role, players }) => {
@@ -578,6 +582,7 @@
         history.replaceState({}, "", u);
 
         sys(`joined: ${room} (${myRole})`);
+        forceBoardRender();
       });
 
       socket.on("room:update", ({ room, players }) => {
@@ -598,6 +603,7 @@
             const players = (s.players.w ? 1 : 0) + (s.players.b ? 1 : 0);
             updateTopPills(players);
           }
+          forceBoardRender();
         } catch (e) {
           console.error("state:sync error", e);
         }
@@ -609,6 +615,7 @@
         board.setPosition(game.fen());
         if (typeof mn === "number") moveNumber = mn;
         requestEval(game.fen());
+        forceBoardRender();
       });
 
       socket.on("move:rejected", (p) => {
@@ -620,6 +627,7 @@
             requestEval(game.fen());
           }
           if (p && p.reason) sys("move rejected: " + p.reason);
+          forceBoardRender();
         } catch (e) {
           console.error("move:rejected error", e);
         }
@@ -636,7 +644,7 @@
         }
       });
 
-      // ---------- Move input ----------
+      // Move input
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
@@ -656,7 +664,7 @@
           const from = event.squareFrom;
           const to = event.squareTo;
 
-          // optimistic local apply (keeps same feel)
+          // optimistic apply (keeps feel)
           const mv = game.move({ from, to, promotion: "q" });
           if (!mv) {
             sys("illegal move");
@@ -679,7 +687,7 @@
         return true;
       });
 
-      // ---------- Buttons ----------
+      // Buttons
       playOnlineBtn.onclick = () => {
         sys("Play Online clicked");
         clearSession();
@@ -741,11 +749,12 @@
         socket.emit("room:join", { room: code });
       }
 
-      // init UI
+      // init
       setMode("idle");
       updateTopPills(0);
       resetLocalGame();
       sys("ready");
+      forceBoardRender();
     </script>
   </body>
 </html>
