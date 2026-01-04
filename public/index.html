@@ -396,7 +396,7 @@
         const label = typeof opts.label === "string" ? opts.label : null;
         const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
         const c = clamp(cp, -600, 600);
-        const whitePct = 50 + c / 12;
+        const whitePct = 50 + c / 12; // 0..100 mapping
         const w = clamp(whitePct, 0, 100);
         const b = 100 - w;
         evalWhiteFill.style.width = `${w}%`;
@@ -405,15 +405,29 @@
       }
       setEvalBarFromCp(0);
 
-      // ---------- Stockfish (same-origin vendored worker) ----------
+      // ---------- Stockfish (same-origin vendored worker, {cmd} protocol) ----------
       let sf = null;
       let evalJob = 0;
       let accepting = false;
 
+      function sfSend(command) {
+        if (!sf) return;
+        sf.postMessage({ cmd: command });
+      }
+
+      function normalizeWorkerLine(msg) {
+        if (typeof msg === "string") return msg;
+        if (msg && typeof msg === "object") {
+          if (typeof msg.data === "string") return msg.data;
+          if (typeof msg.stdout === "string") return msg.stdout;
+          if (typeof msg.text === "string") return msg.text;
+        }
+        try { return String(msg); } catch { return ""; }
+      }
+
       function initStockfish() {
         engineStatusEl.textContent = "starting…";
         try {
-          // ✅ this is the change you asked for
           sf = new Worker("/engine/stockfish.worker.js");
         } catch (e) {
           engineStatusEl.textContent = "error";
@@ -422,9 +436,9 @@
         }
 
         sf.onmessage = (e) => {
-          const line = (e.data || "").toString();
+          const line = normalizeWorkerLine(e.data);
 
-          if (line === "uciok") sf.postMessage("isready");
+          if (line === "uciok") sfSend("isready");
           if (line === "readyok") {
             engineReady = true;
             engineStatusEl.textContent = "ready";
@@ -434,6 +448,7 @@
           }
 
           if (!accepting) return;
+
           if (line.startsWith("info") && line.includes("score")) {
             const mMate = line.match(/score mate (-?\d+)/);
             if (mMate) {
@@ -442,9 +457,11 @@
               setEvalBarFromCp(mateN > 0 ? 600 : -600, { label: mateText });
               return;
             }
+
             const mCp = line.match(/score cp (-?\d+)/);
             if (mCp) {
               const cp = parseInt(mCp[1], 10);
+              // keep displayed eval in White POV
               const whitePov = game.turn() === "w" ? cp : -cp;
               setEvalBarFromCp(whitePov);
             }
@@ -453,15 +470,17 @@
 
         sf.onerror = (e) => {
           engineStatusEl.textContent = "error";
-          err("Stockfish worker error (see console).");
+          const msg = `Stockfish worker error: ${e.message || "(no message)"} @ ${e.filename || "(no file)"}:${e.lineno || "?"}:${e.colno || "?"}`;
+          err(msg);
           console.error("stockfish worker error", e);
         };
 
-        sf.postMessage("uci");
+        sfSend("uci");
       }
 
       function requestEval(fen) {
         if (!sf || !engineReady) return;
+
         evalJob += 1;
         const jobId = evalJob;
         accepting = true;
@@ -469,10 +488,10 @@
           if (jobId === evalJob) accepting = false;
         }, 2500);
 
-        sf.postMessage("stop");
-        sf.postMessage("ucinewgame");
-        sf.postMessage("position fen " + fen);
-        sf.postMessage("go depth 12");
+        sfSend("stop");
+        sfSend("ucinewgame");
+        sfSend("position fen " + fen);
+        sfSend("go depth 12");
       }
 
       initStockfish();
@@ -635,6 +654,7 @@
       copyBtn.onclick = async () => {
         const u = new URL(location.href);
         if (currentRoom) u.searchParams.set("room", currentRoom);
+        history.replaceState({}, "", u);
         await navigator.clipboard.writeText(u.toString());
         sys("room link copied");
       };
