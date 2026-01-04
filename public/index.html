@@ -1,25 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
+    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Live Eval Chess — Online</title>
+    <title>Live Eval Chess</title>
 
-    <!-- ✅ Stable UMD cm-chessboard v7 (CSS + JS) -->
+    <!-- ✅ Keep cm-chessboard CSS + assets on SAME VERSION as the JS import -->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/cm-chessboard@7.11.0/cm-chessboard.css"
+      href="https://unpkg.com/cm-chessboard@8.7.8/assets/chessboard.css"
     />
+    <link rel="icon" href="data:," />
 
     <style>
       :root {
-        --bg: #0b0f17;
-        --text: #e7eefc;
-        --muted: #a7b4cf;
-        --line: rgba(255, 255, 255, 0.08);
-        --sidebarW: 320px; /* slim chat */
+        --bg: #0b0f14;
+        --text: #dbe3ee;
+        --muted: rgba(219, 227, 238, 0.7);
+        --border: rgba(219, 227, 238, 0.12);
+        --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+        --radius: 16px;
+
         --gap: 14px;
         --pad: 14px;
+        --rightW: 360px;
+
+        /* chat height = half of right column */
+        --chatFrac: 0.50;
       }
 
       * { box-sizing: border-box; }
@@ -27,323 +34,381 @@
       html, body {
         height: 100%;
         margin: 0;
-        overflow: hidden; /* ✅ no scrolling */
-      }
-
-      body {
+        overflow: hidden; /* ✅ no page scroll */
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
         background:
-          radial-gradient(800px 400px at 20% 0%, rgba(125, 211, 252, 0.13), transparent 60%),
-          radial-gradient(600px 300px at 80% 10%, rgba(34, 197, 94, 0.10), transparent 60%),
+          radial-gradient(1200px 700px at 30% 10%, rgba(124, 92, 255, 0.15), transparent 60%),
+          radial-gradient(800px 500px at 80% 30%, rgba(40, 209, 124, 0.12), transparent 60%),
           var(--bg);
         color: var(--text);
       }
 
       .wrap {
         height: 100vh;
-        display: grid;
-        grid-template-columns: 1fr var(--sidebarW);
-        gap: var(--gap);
+        width: 100vw;
         padding: var(--pad);
+        display: grid;
+        grid-template-columns: 1fr var(--rightW);
+        gap: var(--gap);
+        min-height: 0;
       }
 
       .card {
-        background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        padding: 12px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.25);
-        overflow: hidden;
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
         min-height: 0;
+        overflow: hidden;
       }
 
-      /* LEFT */
+      .header {
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .title { font-size: 16px; font-weight: 800; letter-spacing: 0.3px; }
+
+      .pillRow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+      .pill {
+        font-size: 12px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.03);
+        color: var(--muted);
+      }
+      .pill strong { color: var(--text); }
+
+      /* LEFT: board should dominate */
       .left {
         display: grid;
         grid-template-rows: auto 1fr;
-        gap: 10px;
         min-height: 0;
       }
 
-      .topbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .brand h1 { font-size: 16px; margin: 0; letter-spacing: 0.2px; }
-      .brand span { font-size: 12px; color: var(--muted); }
-
-      .pills { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-      .pill {
-        border: 1px solid var(--line);
-        padding: 5px 8px;
-        border-radius: 999px;
-        font-size: 12px;
-        color: var(--muted);
-        background: rgba(0,0,0,0.12);
-      }
-
-      #boardStage {
-        min-height: 0;
+      .boardStage {
+        padding: 14px;
         display: grid;
         place-items: center;
+        min-height: 0;
       }
 
-      /* ✅ Big square board always visible */
+      /* ✅ Make board the biggest thing on screen */
       #board {
         width: min(
-          calc(100vw - var(--sidebarW) - (var(--pad) * 2) - var(--gap) - 24px),
-          calc(100vh - (var(--pad) * 2) - 72px)
+          calc(100vw - var(--rightW) - (var(--pad) * 2) - var(--gap) - 28px),
+          calc(100vh - (var(--pad) * 2) - 74px)
         );
         height: min(
-          calc(100vw - var(--sidebarW) - (var(--pad) * 2) - var(--gap) - 24px),
-          calc(100vh - (var(--pad) * 2) - 72px)
+          calc(100vw - var(--rightW) - (var(--pad) * 2) - var(--gap) - 28px),
+          calc(100vh - (var(--pad) * 2) - 74px)
         );
-        max-width: 100%;
-        max-height: 100%;
-        border-radius: 12px;
+        border-radius: 14px;
         overflow: hidden;
       }
 
-      /* RIGHT */
+      /* RIGHT: controls top-right; chat takes ~half */
       .right {
         display: grid;
-        grid-template-rows: auto 1fr;
+        grid-template-rows: calc((1 - var(--chatFrac)) * 100%) calc(var(--chatFrac) * 100%);
         gap: var(--gap);
         min-height: 0;
       }
 
-      .panelTitle {
-        font-size: 12px;
-        color: var(--muted);
-        margin-bottom: 8px;
-        letter-spacing: 0.3px;
-        text-transform: uppercase;
-      }
+      .panelBody { padding: 12px 14px; }
 
-      .block {
-        background: rgba(0,0,0,0.14);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 10px;
-        min-height: 0;
-      }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
       button, input { font: inherit; }
       button {
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.04);
+        color: var(--text);
+        padding: 10px 12px;
+        border-radius: 12px;
         cursor: pointer;
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        padding: 8px 10px;
-        color: var(--text);
-        background: rgba(0,0,0,0.15);
-        transition: transform .05s ease, background .2s ease;
       }
-      button:hover { background: rgba(125,211,252,0.10); }
-      button:active { transform: translateY(1px); }
-      button.primary { border-color: rgba(125,211,252,0.4); }
-      button.danger { border-color: rgba(239,68,68,0.4); }
-
-      input {
-        width: 100%;
-        padding: 8px 10px;
-        border-radius: 10px;
-        border: 1px solid var(--line);
-        background: rgba(0,0,0,0.15);
-        color: var(--text);
+      button.primary {
+        border-color: rgba(124,92,255,0.45);
+        background: rgba(124,92,255,0.18);
       }
-
-      .row { display: flex; gap: 8px; }
-      .row > * { flex: 1; }
-
-      .evalWrap {
-        display: grid;
-        grid-template-columns: 18px 1fr;
-        gap: 10px;
-        align-items: center;
+      button.danger {
+        border-color: rgba(255,77,77,0.45);
+        background: rgba(255,77,77,0.12);
       }
-      .evalBar {
-        width: 18px;
-        height: 120px;
-        border-radius: 999px;
-        border: 1px solid var(--line);
-        overflow: hidden;
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+      input[type="text"] {
+        flex: 1;
+        min-width: 160px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
         background: rgba(0,0,0,0.25);
+        color: var(--text);
+        outline: none;
+      }
+
+      .kv { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 10px; }
+      .kv .k { color: var(--muted); font-size: 12px; }
+      .kv .v { font-weight: 800; font-size: 28px; }
+
+      .modeLine { margin-top: 10px; font-size: 12px; color: var(--muted); }
+      .modeLine strong { color: var(--text); }
+
+      .evalBarWrap {
+        margin-top: 10px;
+        height: 14px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid var(--border);
         position: relative;
+        overflow: hidden;
       }
       .evalFill {
         position: absolute;
-        bottom: 0;
-        width: 100%;
-        height: 50%;
-        background: linear-gradient(180deg, rgba(34,197,94,0.9), rgba(34,197,94,0.55));
+        inset: 0;
+        width: 50%;
+        background: linear-gradient(90deg, rgba(40,209,124,0.0), rgba(40,209,124,0.55));
       }
-      .evalBig { font-size: 26px; letter-spacing: 0.2px; }
-      .evalSub { font-size: 12px; color: var(--muted); line-height: 1.4; }
-      .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
+      .evalMarker {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: calc(50% - 1px);
+        width: 2px;
+        background: rgba(124,92,255,0.85);
+      }
 
       .chatCard {
         display: grid;
         grid-template-rows: auto 1fr auto;
-        gap: 10px;
         min-height: 0;
       }
-      .chatLog {
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 10px;
-        background: rgba(0,0,0,0.14);
-        overflow-y: auto;
-        min-height: 0;
-      }
-      .msg {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 8px;
-        padding: 6px 0;
-        border-bottom: 1px dashed rgba(255,255,255,0.06);
-      }
-      .msg:last-child { border-bottom: none; }
-      .tag {
-        font-size: 11px;
-        padding: 2px 6px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        color: var(--muted);
-        height: fit-content;
-      }
-      .msg .text { font-size: 13px; line-height: 1.35; word-break: break-word; }
-      .tag.sys { border-color: rgba(125,211,252,0.35); color: rgba(125,211,252,0.95); }
-      .tag.user { border-color: rgba(255,255,255,0.12); color: var(--text); }
 
-      .chatSend { display: flex; gap: 8px; }
-      .chatSend input { flex: 1; }
-      .chatSend button { width: 90px; }
+      .feed {
+        min-height: 0;
+        overflow: auto; /* ✅ internal scroll only */
+        padding: 10px 12px;
+        border-top: 1px solid var(--border);
+      }
+
+      .msg {
+        margin: 0 0 10px 0;
+        padding: 10px 10px;
+        border: 1px solid rgba(219,227,238,0.12);
+        background: rgba(0,0,0,0.18);
+        border-radius: 12px;
+      }
+      .msg .meta {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 6px;
+        color: rgba(219,227,238,0.75);
+        font-size: 11px;
+      }
+      .tag {
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(219,227,238,0.15);
+        background: rgba(255,255,255,0.03);
+      }
+      .tag.sys { border-color: rgba(124,92,255,0.25); }
+      .tag.user { border-color: rgba(40,209,124,0.25); }
+      .tag.err { border-color: rgba(255,77,77,0.35); }
+      .msg .text { white-space: pre-wrap; font-size: 13px; line-height: 1.35; }
+
+      .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
 
       @media (max-width: 1050px) {
-        .wrap { grid-template-columns: 1fr; grid-template-rows: 62vh 1fr; }
-        :root { --sidebarW: 100%; }
+        :root { --rightW: 100%; }
+        .wrap {
+          grid-template-columns: 1fr;
+          grid-template-rows: 60vh 40vh;
+        }
         #board {
-          width: min(calc(100vw - (var(--pad) * 2) - 24px), calc(62vh - 60px));
-          height: min(calc(100vw - (var(--pad) * 2) - 24px), calc(62vh - 60px));
+          width: min(calc(100vw - (var(--pad) * 2) - 28px), calc(60vh - 70px));
+          height: min(calc(100vw - (var(--pad) * 2) - 28px), calc(60vh - 70px));
         }
       }
     </style>
+
+    <script src="/socket.io/socket.io.js"></script>
+
+    <!-- ✅ Use the UMD that defines window.Chess (no ESM export token explosions) -->
+    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.10.3/chess.min.js"></script>
   </head>
 
   <body>
     <div class="wrap">
       <div class="card left">
-        <div class="topbar">
-          <div class="brand">
-            <h1>Live Eval Chess</h1>
-            <span>Online rooms + local Stockfish eval (browser)</span>
+        <div class="header">
+          <div>
+            <div class="title">Live Eval Chess</div>
+            <div style="font-size:12px;color:var(--muted)">Online rooms + local Stockfish eval (browser)</div>
           </div>
-          <div class="pills">
-            <div class="pill" id="modePill">idle</div>
-            <div class="pill" id="roomPill">room: —</div>
-            <div class="pill" id="playersPill">players: 0</div>
+          <div class="pillRow">
+            <div class="pill">mode: <strong id="modeText">idle</strong></div>
+            <div class="pill">room: <strong id="roomPill">—</strong></div>
+            <div class="pill">players: <strong id="playersPill">0</strong></div>
+            <div class="pill">role: <strong id="rolePill">—</strong></div>
           </div>
         </div>
 
-        <div id="boardStage">
+        <div class="boardStage">
           <div id="board"></div>
         </div>
       </div>
 
       <div class="right">
         <div class="card">
-          <div class="panelTitle">Controls</div>
-
-          <div class="block" style="margin-bottom:10px;">
-            <div class="panelTitle" style="margin-bottom:6px;">Online</div>
-            <div class="row" style="margin-bottom: 8px;">
-              <button class="primary" id="playOnlineBtn">Play Online</button>
-              <button class="danger" id="cancelBtn">Cancel</button>
+          <div class="header">
+            <div class="title">Controls</div>
+            <div class="pillRow">
+              <div class="pill">engine: <strong id="engineStatus">starting…</strong></div>
             </div>
-            <div class="row" style="margin-bottom: 8px;">
-              <button id="createBtn">Create Room</button>
-              <button id="copyBtn">Copy Link</button>
-            </div>
-            <div class="row">
-              <input id="joinInput" placeholder="ROOM CODE (e.g. 8KJ3QZ)" />
-              <button id="joinBtn">Join</button>
-            </div>
-            <div style="height: 10px;"></div>
-            <button id="restartBtn">Restart (Local Only)</button>
           </div>
 
-          <div class="block">
-            <div class="panelTitle" style="margin-bottom:6px;">Evaluation</div>
-            <div class="evalWrap">
-              <div class="evalBar">
-                <div class="evalFill" id="evalFill"></div>
-              </div>
-              <div>
-                <div class="evalBig" id="evalBig">0.0</div>
-                <div class="evalSub" id="evalSub">
-                  Eval is local. Depth 14. Neutral until first move.
-                </div>
-                <div style="height:8px;"></div>
-                <div class="muted">Server authoritative + resync after refresh/disconnect.</div>
-              </div>
+          <div class="panelBody">
+            <div class="row">
+              <button id="playOnlineBtn" class="primary">Play Online</button>
+              <button id="cancelBtn" class="danger" disabled>Cancel</button>
+              <button id="restartBtn" disabled>Restart</button>
+              <button id="copyBtn" disabled>Copy Link</button>
+            </div>
+
+            <div class="kv">
+              <div class="k">Eval</div>
+              <div class="v" id="evalNum">+0.0</div>
+            </div>
+
+            <div class="evalBarWrap" aria-hidden="true">
+              <div class="evalFill" id="evalFill"></div>
+              <div class="evalMarker"></div>
+            </div>
+
+            <div class="modeLine">
+              You can only move when it’s your turn.
+            </div>
+
+            <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
+
+            <div class="row" style="margin-bottom: 8px">
+              <button id="createBtn">Create Room</button>
+              <input id="joinInput" type="text" placeholder="ROOM CODE" />
+              <button id="joinBtn">Join</button>
+            </div>
+
+            <div style="color: var(--muted); font-size: 12px">
+              Matchmaking waits for 2 players. Friend rooms use ?room=CODE.
             </div>
           </div>
         </div>
 
         <div class="card chatCard">
-          <div class="panelTitle">Room Feed</div>
-          <div class="chatLog" id="chatLog"></div>
-          <div class="chatSend">
-            <input id="chatInput" placeholder="Type a message…" />
+          <div class="header">
+            <div class="title">Room Feed</div>
+            <div class="pillRow"><div class="pill">log</div></div>
+          </div>
+
+          <div id="feed" class="feed"></div>
+
+          <div class="chatRow">
+            <input id="chatInput" type="text" placeholder="message…" />
             <button id="sendBtn">Send</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- socket.io stays as-is -->
-    <script src="/socket.io/socket.io.js"></script>
+    <script type="module">
+      // ✅ v8.7.8 ESM import
+      import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
 
-    <!-- ✅ cm-chessboard v7 UMD -->
-    <script src="https://cdn.jsdelivr.net/npm/cm-chessboard@7.11.0/cm-chessboard.min.js"></script>
+      // ---------- DOM ----------
+      const feedEl = document.getElementById("feed");
+      const roomEl = document.getElementById("roomPill");
+      const roleEl = document.getElementById("rolePill");
+      const playersEl = document.getElementById("playersPill");
+      const modeTextEl = document.getElementById("modeText");
 
-    <!-- ✅ chess.js UMD that defines window.Chess (NO export tokens) -->
-    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.10.3/chess.min.js"></script>
-
-    <script>
-      const modePill = document.getElementById("modePill");
-      const roomPill = document.getElementById("roomPill");
-      const playersPill = document.getElementById("playersPill");
+      const evalNumEl = document.getElementById("evalNum");
+      const evalFillEl = document.getElementById("evalFill");
+      const engineStatusEl = document.getElementById("engineStatus");
 
       const playOnlineBtn = document.getElementById("playOnlineBtn");
       const cancelBtn = document.getElementById("cancelBtn");
-      const createBtn = document.getElementById("createBtn");
-      const joinBtn = document.getElementById("joinBtn");
-      const joinInput = document.getElementById("joinInput");
       const restartBtn = document.getElementById("restartBtn");
       const copyBtn = document.getElementById("copyBtn");
 
-      const evalFill = document.getElementById("evalFill");
-      const evalBig = document.getElementById("evalBig");
-      const evalSub = document.getElementById("evalSub");
+      const createBtn = document.getElementById("createBtn");
+      const joinBtn = document.getElementById("joinBtn");
+      const joinInput = document.getElementById("joinInput");
 
-      const chatLog = document.getElementById("chatLog");
       const chatInput = document.getElementById("chatInput");
       const sendBtn = document.getElementById("sendBtn");
 
+      // ---------- Feed helpers ----------
+      function addMsg(kind, from, text) {
+        const d = document.createElement("div");
+        d.className = "msg";
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        const tag = document.createElement("span");
+        tag.className = "tag " + (kind === "sys" ? "sys" : kind === "err" ? "err" : "user");
+        tag.textContent = kind;
+        const who = document.createElement("span");
+        who.textContent = from;
+        meta.appendChild(tag);
+        meta.appendChild(who);
+
+        const body = document.createElement("div");
+        body.className = "text";
+        body.textContent = text;
+
+        d.appendChild(meta);
+        d.appendChild(body);
+        feedEl.appendChild(d);
+        feedEl.scrollTop = feedEl.scrollHeight;
+      }
+      const ts = () => new Date().toTimeString().slice(0, 8);
+      const sys = (t) => addMsg("sys", ts(), t);
+      const err = (t) => addMsg("err", "error", t);
+
+      window.addEventListener("error", (e) => err(e?.message || String(e)));
+      window.addEventListener("unhandledrejection", (e) =>
+        err("unhandledrejection: " + (e?.reason?.message || String(e.reason)))
+      );
+
+      sys("booted");
+
+      // ---------- State ----------
       let currentRoom = null;
       let myRole = null; // "white" | "black"
-      let mode = "idle";
+      let mode = "idle"; // idle | searching | matched
       let moveNumber = 0;
 
-      function setMode(m) { mode = m; modePill.textContent = m; }
-      function updateTopPills(players) {
-        roomPill.textContent = `room: ${currentRoom || "—"}`;
-        playersPill.textContent = `players: ${players ?? 0}`;
+      function setMode(next) {
+        mode = next;
+        modeTextEl.textContent = mode;
+        const searching = mode === "searching";
+        playOnlineBtn.disabled = searching;
+        cancelBtn.disabled = !searching;
+        restartBtn.disabled = !(mode === "matched");
       }
+
+      function updateTopPills(players = null) {
+        roomEl.textContent = currentRoom || "—";
+        roleEl.textContent = myRole || "—";
+        if (players !== null) playersEl.textContent = String(players);
+        copyBtn.disabled = !currentRoom;
+      }
+
       function clearSession() {
         currentRoom = null;
         myRole = null;
@@ -353,59 +418,53 @@
         updateTopPills(0);
       }
 
-      function addMsg(kind, tag, text) {
-        const row = document.createElement("div");
-        row.className = "msg";
-
-        const t = document.createElement("div");
-        t.className = `tag ${kind}`;
-        t.textContent = tag;
-
-        const b = document.createElement("div");
-        b.className = "text";
-        b.textContent = text;
-
-        row.appendChild(t);
-        row.appendChild(b);
-        chatLog.appendChild(row);
-        chatLog.scrollTop = chatLog.scrollHeight;
-      }
-      function sys(text) { addMsg("sys", "sys", text); }
-
-      // chess.js UMD defines window.Chess
-      const game = new Chess();
+      // ---------- Board ----------
       const boardEl = document.getElementById("board");
 
-      // cm-chessboard v7 defines window.Chessboard + window.INPUT_EVENT_TYPE
+      // ✅ Assets + CSS are both v8.7.8 from unpkg — no more local /cm-assets mismatch
       const board = new Chessboard(boardEl, {
-        position: game.fen(),
-        style: { cssClass: "default", showCoordinates: true }
+        assetsUrl: "https://unpkg.com/cm-chessboard@8.7.8/assets/",
+        position: FEN.start,
+        orientation: COLOR.white,
+        style: { borderType: "thin" },
       });
+      board.setPosition(FEN.start);
+
+      // chess.js global
+      const game = new window.Chess();
 
       function setOrientation() {
-        if (myRole === "black") board.setOrientation("black");
-        else board.setOrientation("white");
+        board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
       }
 
-      function forceBoardRender() {
-        try { board.setPosition(game.fen()); } catch (e) {}
+      function shouldShowEval() {
+        return game.history().length > 0;
       }
-      window.addEventListener("resize", () => requestAnimationFrame(forceBoardRender));
 
-      function setEvalBarFromCp(whiteCp) {
-        const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
-        const normalized = clamp(whiteCp, -800, 800);
-        const pct = ((normalized + 800) / 1600) * 100;
-        evalFill.style.height = pct + "%";
+      // ---------- Eval UI ----------
+      function fmtEval(cp) {
+        const v = cp / 100;
+        const sign = v > 0 ? "+" : "";
+        return sign + v.toFixed(1);
       }
+
+      function setEvalFromCp(cp, label = null) {
+        evalNumEl.textContent = label ? label : fmtEval(cp);
+
+        // map [-600..600] to [0..100] for fill width (center=50)
+        const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+        const c = clamp(cp, -600, 600);
+        const pct = clamp(50 + c / 12, 0, 100);
+        evalFillEl.style.width = pct + "%";
+      }
+      setEvalFromCp(0);
 
       function resetLocalGame() {
         game.reset();
         moveNumber = 0;
         board.setPosition(game.fen());
-        setEvalBarFromCp(0);
+        setEvalFromCp(0);
         requestEval(game.fen());
-        forceBoardRender();
       }
 
       function canMoveNow() {
@@ -415,67 +474,91 @@
         return false;
       }
 
-      // Stockfish worker
+      // ---------- Stockfish worker ----------
       let sf = null;
-      let sfReady = false;
+      let engineReady = false;
+      let evalJob = 0;
+      let accepting = false;
 
-      function ensureStockfish() {
-        if (sf) return;
-        sf = new Worker("/engine/stockfish-uci.js");
+      function initStockfish() {
+        engineStatusEl.textContent = "starting…";
+        try {
+          sf = new Worker("/engine/stockfish-uci.js");
+        } catch (e) {
+          engineStatusEl.textContent = "error";
+          err("Stockfish worker failed to construct: " + (e?.message || e));
+          return;
+        }
+
         sf.onmessage = (e) => {
           const line = (e.data || "").toString();
           if (!line) return;
 
-          if (line === "uciok") { sfReady = true; return; }
-
-          if (line.includes("score cp")) {
-            const m = line.match(/score cp (-?\d+)/);
-            if (m) setEvalFromEngine(parseInt(m[1], 10));
+          if (line === "uciok") sf.postMessage("isready");
+          if (line === "readyok") {
+            engineReady = true;
+            engineStatusEl.textContent = "ready";
+            sys("engine ready");
+            requestEval(game.fen());
+            return;
           }
 
-          if (line.includes("score mate")) {
-            const m = line.match(/score mate (-?\d+)/);
-            if (m) {
-              const mate = parseInt(m[1], 10);
-              const cp = mate > 0 ? 10000 : -10000;
-              setEvalFromEngine(cp, mate);
-            }
+          if (!accepting) return;
+          if (!line.startsWith("info") || !line.includes("score")) return;
+          if (!shouldShowEval()) return;
+
+          const mMate = line.match(/score mate (-?\d+)/);
+          if (mMate) {
+            const mateN = parseInt(mMate[1], 10);
+            const mateText = (mateN > 0 ? "+M" : "-M") + Math.abs(mateN);
+            setEvalFromCp(mateN > 0 ? 600 : -600, mateText);
+            return;
+          }
+
+          const mCp = line.match(/score cp (-?\d+)/);
+          if (mCp) {
+            const cp = parseInt(mCp[1], 10);
+            const whitePov = game.turn() === "w" ? cp : -cp;
+            setEvalFromCp(whitePov);
           }
         };
 
+        sf.onerror = (e) => {
+          engineStatusEl.textContent = "error";
+          err("Stockfish worker error (see console).");
+          console.error("stockfish worker error", e);
+        };
+
         sf.postMessage("uci");
-        sf.postMessage("setoption name Threads value 2");
-        sf.postMessage("setoption name Hash value 64");
-        sf.postMessage("isready");
       }
 
       function requestEval(fen) {
-        ensureStockfish();
-        if (!sfReady) return;
+        if (!sf || !engineReady) return;
+
+        evalJob += 1;
+        const jobId = evalJob;
+        accepting = true;
+        setTimeout(() => {
+          if (jobId === evalJob) accepting = false;
+        }, 2500);
+
+        sf.postMessage("stop");
         sf.postMessage("ucinewgame");
         sf.postMessage("position fen " + fen);
-        sf.postMessage("go depth 14");
+        sf.postMessage("go depth 12");
       }
 
-      function setEvalFromEngine(cp, mate = null) {
-        let whiteCp = cp;
-        if (game.turn() === "b") whiteCp = -cp;
+      initStockfish();
 
-        if (mate !== null) {
-          evalBig.textContent = mate > 0 ? `M${mate}` : `M${Math.abs(mate)}`;
-          evalSub.textContent = "Mate sequence detected";
-          setEvalBarFromCp(whiteCp);
-          return;
-        }
+      // ---------- Socket ----------
+      const socket = io({ transports: ["polling", "websocket"] });
 
-        evalBig.textContent = (whiteCp / 100).toFixed(1);
-        evalSub.textContent = "cp — white good up, black good down";
-        setEvalBarFromCp(whiteCp);
-      }
-
-      // Socket
-      const socket = io();
       socket.on("connect", () => sys("socket connected"));
+      socket.on("disconnect", () => sys("socket disconnected"));
+      socket.on("connect_error", (e) => {
+        err("socket connect_error: " + (e?.message || e));
+        console.error("connect_error", e);
+      });
 
       socket.on("queue:status", ({ state }) => {
         if (state === "searching") {
@@ -554,7 +637,6 @@
             const players = (s.players.w ? 1 : 0) + (s.players.b ? 1 : 0);
             updateTopPills(players);
           }
-          forceBoardRender();
         } catch (e) {
           console.error("state:sync error", e);
         }
@@ -566,7 +648,6 @@
         board.setPosition(game.fen());
         if (typeof mn === "number") moveNumber = mn;
         requestEval(game.fen());
-        forceBoardRender();
       });
 
       socket.on("move:rejected", (p) => {
@@ -578,7 +659,6 @@
             requestEval(game.fen());
           }
           if (p && p.reason) sys("move rejected: " + p.reason);
-          forceBoardRender();
         } catch (e) {
           console.error("move:rejected error", e);
         }
@@ -595,7 +675,7 @@
         }
       });
 
-      // Move input (v7 API)
+      // Move input
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
@@ -635,23 +715,23 @@
         return true;
       });
 
-      // Buttons
+      // Controls
       playOnlineBtn.onclick = () => {
-        sys("Play Online clicked");
+        sys("Play Online");
         clearSession();
         setMode("searching");
         socket.emit("queue:join");
       };
 
       cancelBtn.onclick = () => {
-        sys("Cancel clicked");
+        sys("Cancel");
         socket.emit("queue:cancel");
         clearSession();
         setMode("idle");
       };
 
       createBtn.onclick = () => {
-        sys("Create clicked");
+        sys("Create Room");
         socket.emit("queue:cancel");
         socket.emit("room:create");
       };
@@ -659,12 +739,15 @@
       joinBtn.onclick = () => {
         const code = (joinInput.value || "").trim().toUpperCase();
         if (!code) return;
-        sys("Join clicked: " + code);
+        sys("Join: " + code);
         socket.emit("queue:cancel");
         socket.emit("room:join", { room: code });
       };
 
-      restartBtn.onclick = () => { resetLocalGame(); sys("restarted (local)"); };
+      restartBtn.onclick = () => {
+        resetLocalGame();
+        sys("restarted (local)");
+      };
 
       copyBtn.onclick = async () => {
         const u = new URL(location.href);
@@ -680,11 +763,10 @@
         socket.emit("chat:send", { text: t });
         chatInput.value = "";
       }
-
       sendBtn.onclick = sendChat;
       chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
 
-      // auto-join from URL
+      // auto-join
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) {
         const code = roomParam.trim().toUpperCase();
@@ -697,7 +779,6 @@
       updateTopPills(0);
       resetLocalGame();
       sys("ready");
-      forceBoardRender();
     </script>
   </body>
 </html>
