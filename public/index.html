@@ -405,7 +405,7 @@
       }
       setEvalBarFromCp(0);
 
-      // ---------- Stockfish (same-origin worker: /stockfish.js) ----------
+      // ---------- Stockfish (same-origin vendored worker) ----------
       let sf = null;
       let evalJob = 0;
       let accepting = false;
@@ -413,7 +413,8 @@
       function initStockfish() {
         engineStatusEl.textContent = "starting…";
         try {
-          sf = new Worker("/stockfish.js");
+          // ✅ this is the change you asked for
+          sf = new Worker("/engine/stockfish.worker.js");
         } catch (e) {
           engineStatusEl.textContent = "error";
           err("Stockfish Worker failed to construct: " + (e?.message || e));
