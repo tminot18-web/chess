@@ -15,18 +15,21 @@
       :root {
         --bg: #0b0f17;
         --panel: #101827;
-        --panel2: #0e1625;
         --text: #e7eefc;
         --muted: #a7b4cf;
         --accent: #7dd3fc;
         --line: rgba(255, 255, 255, 0.08);
-        --good: #22c55e;
-        --bad: #ef4444;
       }
 
       * { box-sizing: border-box; }
-      body {
+
+      html, body {
+        height: 100%;
         margin: 0;
+        overflow: hidden; /* ✅ no page scroll */
+      }
+
+      body {
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
         background: radial-gradient(800px 400px at 20% 0%, rgba(125, 211, 252, 0.13), transparent 60%),
                     radial-gradient(600px 300px at 80% 10%, rgba(34, 197, 94, 0.10), transparent 60%),
@@ -35,12 +38,11 @@
       }
 
       .wrap {
-        max-width: 1100px;
-        margin: 0 auto;
-        padding: 18px;
+        height: 100vh;
         display: grid;
         grid-template-columns: 520px 1fr;
         gap: 14px;
+        padding: 14px;
       }
 
       .card {
@@ -49,6 +51,22 @@
         border-radius: 14px;
         padding: 12px;
         box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        overflow: hidden; /* ✅ keep content contained */
+        min-height: 0;    /* ✅ allow internal scroll children */
+      }
+
+      .left {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 10px;
+        min-height: 0;
+      }
+
+      .right {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 10px;
+        min-height: 0;
       }
 
       .topbar {
@@ -56,7 +74,6 @@
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        margin-bottom: 10px;
       }
 
       .brand {
@@ -74,7 +91,7 @@
         color: var(--muted);
       }
 
-      .pills { display: flex; gap: 6px; align-items: center; }
+      .pills { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
       .pill {
         border: 1px solid var(--line);
         padding: 5px 8px;
@@ -84,13 +101,19 @@
         background: rgba(0,0,0,0.12);
       }
 
-      .grid2 {
+      /* ✅ Board fits viewport: square, never forces scroll */
+      #boardWrap {
+        min-height: 0;
         display: grid;
-        grid-template-columns: 1fr;
-        gap: 12px;
+        place-items: center;
       }
 
-      #board { width: 496px; height: 496px; margin: 0 auto; }
+      #board {
+        width: 100%;
+        max-width: 520px;
+        aspect-ratio: 1 / 1;
+        max-height: calc(100vh - 220px); /* topbar + controls area */
+      }
 
       .controls {
         display: grid;
@@ -98,16 +121,24 @@
         gap: 10px;
       }
 
-      .controls .block {
+      .block {
         background: rgba(0,0,0,0.14);
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px;
+        overflow: hidden;
+        min-height: 0;
       }
 
-      button, input {
-        font: inherit;
+      .sectionTitle {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 8px;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
       }
+
+      button, input { font: inherit; }
       button {
         cursor: pointer;
         border: 1px solid var(--line);
@@ -121,6 +152,7 @@
       button:active { transform: translateY(1px); }
       button.primary { border-color: rgba(125,211,252,0.4); }
       button.danger { border-color: rgba(239,68,68,0.4); }
+
       input {
         width: 100%;
         padding: 8px 10px;
@@ -133,24 +165,15 @@
       .row { display: flex; gap: 8px; }
       .row > * { flex: 1; }
 
-      .sectionTitle {
-        font-size: 12px;
-        color: var(--muted);
-        margin-bottom: 8px;
-        letter-spacing: 0.3px;
-        text-transform: uppercase;
-      }
-
       .evalWrap {
         display: grid;
         grid-template-columns: 22px 1fr;
         gap: 10px;
         align-items: center;
       }
-
       .evalBar {
         width: 22px;
-        height: 240px;
+        height: min(240px, 28vh); /* ✅ scales down to fit */
         border-radius: 999px;
         border: 1px solid var(--line);
         overflow: hidden;
@@ -164,7 +187,6 @@
         height: 50%;
         background: linear-gradient(180deg, rgba(34,197,94,0.9), rgba(34,197,94,0.55));
       }
-
       .evalText {
         display: flex;
         flex-direction: column;
@@ -180,20 +202,14 @@
         line-height: 1.4;
       }
 
-      .chat {
-        display: grid;
-        grid-template-rows: auto 1fr auto;
-        height: 100%;
-        min-height: 620px;
-      }
-
+      /* ✅ Chat fills remaining height and scrolls internally */
       .chatLog {
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px;
         background: rgba(0,0,0,0.14);
-        overflow: auto;
-        max-height: 530px;
+        overflow-y: auto;
+        min-height: 0;
       }
 
       .msg {
@@ -222,26 +238,29 @@
       .tag.user { border-color: rgba(255,255,255,0.12); color: var(--text); }
 
       .chatSend {
-        margin-top: 10px;
         display: flex;
         gap: 8px;
       }
       .chatSend input { flex: 1; }
       .chatSend button { width: 120px; }
 
-      .muted { color: var(--muted); font-size: 12px; }
+      .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
 
       @media (max-width: 1020px) {
-        .wrap { grid-template-columns: 1fr; }
-        #board { width: min(496px, 92vw); height: min(496px, 92vw); }
-        .chat { min-height: 520px; }
+        /* ✅ Mobile: stack, still no page scroll, chat scrolls */
+        .wrap {
+          grid-template-columns: 1fr;
+          grid-template-rows: 1fr 1fr;
+        }
+        #board { max-height: 42vh; }
       }
     </style>
   </head>
 
   <body>
     <div class="wrap">
-      <div class="card">
+      <!-- LEFT: board + controls + eval -->
+      <div class="card left">
         <div class="topbar">
           <div class="brand">
             <h1>Live Eval Chess</h1>
@@ -254,63 +273,60 @@
           </div>
         </div>
 
-        <div id="board"></div>
+        <div id="boardWrap">
+          <div id="board"></div>
+        </div>
 
-        <div class="grid2" style="margin-top: 12px;">
-          <div class="controls">
-            <div class="block">
-              <div class="sectionTitle">Online</div>
-              <div class="row" style="margin-bottom: 8px;">
-                <button class="primary" id="playOnlineBtn">Play Online</button>
-                <button class="danger" id="cancelBtn">Cancel</button>
-              </div>
-              <div class="row">
-                <button id="createBtn">Create Room</button>
-                <button id="copyBtn">Copy Link</button>
-              </div>
-              <div style="height: 10px;"></div>
-              <div class="row">
-                <input id="joinInput" placeholder="ROOM CODE (e.g. 8KJ3QZ)" />
-                <button id="joinBtn">Join</button>
-              </div>
-              <div style="height: 10px;"></div>
-              <button id="restartBtn">Restart (Local Only)</button>
+        <div class="controls">
+          <div class="block">
+            <div class="sectionTitle">Online</div>
+            <div class="row" style="margin-bottom: 8px;">
+              <button class="primary" id="playOnlineBtn">Play Online</button>
+              <button class="danger" id="cancelBtn">Cancel</button>
             </div>
-
-            <div class="block">
-              <div class="sectionTitle">Evaluation</div>
-              <div class="evalWrap">
-                <div class="evalBar" title="Engine eval (white good up, black good down)">
-                  <div class="evalFill" id="evalFill"></div>
-                </div>
-                <div class="evalText">
-                  <div class="big" id="evalBig">0.0</div>
-                  <div class="sub" id="evalSub">
-                    Eval is local (your device). Depth 14. Starts neutral until a move is made.
-                  </div>
-                </div>
-              </div>
+            <div class="row">
+              <button id="createBtn">Create Room</button>
+              <button id="copyBtn">Copy Link</button>
             </div>
+            <div style="height: 10px;"></div>
+            <div class="row">
+              <input id="joinInput" placeholder="ROOM CODE (e.g. 8KJ3QZ)" />
+              <button id="joinBtn">Join</button>
+            </div>
+            <div style="height: 10px;"></div>
+            <button id="restartBtn">Restart (Local Only)</button>
           </div>
 
-          <div class="chat card" style="padding: 12px;">
-            <div class="sectionTitle">Room Feed</div>
-            <div class="chatLog" id="chatLog"></div>
-            <div class="chatSend">
-              <input id="chatInput" placeholder="Type a message…" />
-              <button id="sendBtn">Send</button>
+          <div class="block">
+            <div class="sectionTitle">Evaluation</div>
+            <div class="evalWrap">
+              <div class="evalBar" title="Engine eval (white good up, black good down)">
+                <div class="evalFill" id="evalFill"></div>
+              </div>
+              <div class="evalText">
+                <div class="big" id="evalBig">0.0</div>
+                <div class="sub" id="evalSub">
+                  Eval is local (your device). Depth 14. Starts neutral until a move is made.
+                </div>
+              </div>
+            </div>
+            <div style="height: 10px;"></div>
+            <div class="muted">
+              Server is authoritative + supports resync after refresh/disconnect.
             </div>
           </div>
         </div>
       </div>
 
-      <div class="card">
-        <div class="sectionTitle">How it works</div>
-        <div class="muted" style="line-height: 1.55;">
-          <div>• Click <b>Play Online</b> to enter matchmaking (random opponent).</div>
-          <div>• Or <b>Create Room</b> and share the link/code.</div>
-          <div>• Engine runs in your browser (WASM Stockfish), so eval speed depends on your device.</div>
-          <div>• Server is now authoritative for game state and supports resync after refresh/disconnect.</div>
+      <!-- RIGHT: chat (internal scroll) -->
+      <div class="card right">
+        <div class="sectionTitle">Room Feed</div>
+
+        <div class="chatLog" id="chatLog"></div>
+
+        <div class="chatSend">
+          <input id="chatInput" placeholder="Type a message…" />
+          <button id="sendBtn">Send</button>
         </div>
       </div>
     </div>
@@ -321,8 +337,9 @@
     <script src="https://unpkg.com/cm-chessboard@3.15.5/cm-chessboard.js"></script>
 
     <script>
+      // ✅ IMPORTANT: cm-chessboard v3 exposes globals under `cmChessboard`
+      const { Chessboard, INPUT_EVENT_TYPE } = window.cmChessboard;
       const { Chess } = window;
-      const { Chessboard, INPUT_EVENT_TYPE } = window;
 
       // ---------- DOM ----------
       const modePill = document.getElementById("modePill");
@@ -394,14 +411,15 @@
 
       // ---------- Chess + Board ----------
       const game = new Chess();
+      const boardEl = document.getElementById("board");
 
-      const board = new Chessboard(document.getElementById("board"), {
+      const board = new Chessboard(boardEl, {
         position: game.fen(),
+        responsive: true,
         style: {
           cssClass: "default",
           showCoordinates: true,
         },
-        responsive: true,
       });
 
       function setOrientation() {
@@ -413,8 +431,8 @@
         game.reset();
         moveNumber = 0;
         board.setPosition(game.fen());
-        setEvalBarFromCp(0);          // ✅ start at 0.0
-        requestEval(game.fen());      // still warms engine, but UI stays 0 until first move
+        setEvalBarFromCp(0);
+        requestEval(game.fen());
       }
 
       function canMoveNow() {
@@ -424,11 +442,14 @@
         return false;
       }
 
+      // ✅ Ensure board renders after layout
+      window.requestAnimationFrame(() => {
+        board.setPosition(game.fen());
+      });
+
       // ---------- Stockfish (browser worker) ----------
       let sf = null;
       let sfReady = false;
-      let pendingEvalFen = null;
-      let lastCp = 0;
 
       function ensureStockfish() {
         if (sf) return;
@@ -442,24 +463,16 @@
             return;
           }
 
-          // parse evals
-          // example: "info depth 14 ... score cp 23 ..."
           if (line.includes("score cp")) {
             const m = line.match(/score cp (-?\d+)/);
-            if (m) {
-              const cp = parseInt(m[1], 10);
-              lastCp = cp;
-              setEvalFromEngine(cp);
-            }
+            if (m) setEvalFromEngine(parseInt(m[1], 10));
           }
 
-          // mate handling (optional)
           if (line.includes("score mate")) {
             const m = line.match(/score mate (-?\d+)/);
             if (m) {
               const mate = parseInt(m[1], 10);
               const cp = mate > 0 ? 10000 : -10000;
-              lastCp = cp;
               setEvalFromEngine(cp, mate);
             }
           }
@@ -473,21 +486,16 @@
 
       function requestEval(fen) {
         ensureStockfish();
-        pendingEvalFen = fen;
         if (!sfReady) return;
-
         sf.postMessage("ucinewgame");
         sf.postMessage("position fen " + fen);
         sf.postMessage("go depth 14");
       }
 
       function setEvalFromEngine(cp, mate = null) {
-        // Convert to "white POV" and keep consistent direction.
-        // chess.js returns side to move, but eval is from side-to-move in many engines.
-        // We'll approximate to white POV by flipping when black to move.
+        // approx white POV: flip when black to move
         let whiteCp = cp;
-        const turn = game.turn();
-        if (turn === "b") whiteCp = -cp;
+        if (game.turn() === "b") whiteCp = -cp;
 
         if (mate !== null) {
           evalBig.textContent = mate > 0 ? `M${mate}` : `M${Math.abs(mate)}`;
@@ -496,26 +504,22 @@
           return;
         }
 
-        const val = (whiteCp / 100).toFixed(1);
-        evalBig.textContent = val;
+        evalBig.textContent = (whiteCp / 100).toFixed(1);
         evalSub.textContent = "cp (centipawns) — white good up, black good down";
         setEvalBarFromCp(whiteCp);
       }
 
       function setEvalBarFromCp(whiteCp) {
-        // map cp to 0..100% with a soft clamp
         const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
-        const normalized = clamp(whiteCp, -800, 800); // -8 to +8 range
-        const pct = ((normalized + 800) / 1600) * 100; // 0..100
+        const normalized = clamp(whiteCp, -800, 800);
+        const pct = ((normalized + 800) / 1600) * 100;
         evalFill.style.height = pct + "%";
       }
 
       // ---------- Socket ----------
       const socket = io();
 
-      socket.on("connect", () => {
-        sys("socket connected");
-      });
+      socket.on("connect", () => sys("socket connected"));
 
       socket.on("queue:status", ({ state }) => {
         if (state === "searching") {
@@ -536,9 +540,11 @@
         setOrientation();
         resetLocalGame();
         socket.emit("state:request", { room: currentRoom });
+
         const u = new URL(location.href);
         u.searchParams.set("room", currentRoom);
         history.replaceState({}, "", u);
+
         sys(`match found: ${room} (${myRole})`);
       });
 
@@ -550,9 +556,11 @@
         setOrientation();
         resetLocalGame();
         socket.emit("state:request", { room: currentRoom });
+
         const u = new URL(location.href);
         u.searchParams.set("room", currentRoom);
         history.replaceState({}, "", u);
+
         sys(`room created: ${room}`);
       });
 
@@ -564,9 +572,11 @@
         setOrientation();
         resetLocalGame();
         socket.emit("state:request", { room: currentRoom });
+
         const u = new URL(location.href);
         u.searchParams.set("room", currentRoom);
         history.replaceState({}, "", u);
+
         sys(`joined: ${room} (${myRole})`);
       });
 
@@ -574,10 +584,7 @@
         if (room === currentRoom) updateTopPills(players);
       });
 
-      socket.on("room:error", ({ error }) => {
-        sys("room error: " + error);
-      });
-
+      socket.on("room:error", ({ error }) => sys("room error: " + error));
       socket.on("opponent:left", () => sys("opponent left"));
 
       socket.on("state:sync", (s) => {
@@ -592,7 +599,7 @@
             updateTopPills(players);
           }
         } catch (e) {
-          console.error("state:sync handler error", e);
+          console.error("state:sync error", e);
         }
       });
 
@@ -605,7 +612,6 @@
       });
 
       socket.on("move:rejected", (p) => {
-        // snap back to server truth
         try {
           if (p && p.fen) {
             game.load(p.fen);
@@ -615,7 +621,7 @@
           }
           if (p && p.reason) sys("move rejected: " + p.reason);
         } catch (e) {
-          console.error("move:rejected handler error", e);
+          console.error("move:rejected error", e);
         }
       });
 
@@ -650,7 +656,7 @@
           const from = event.squareFrom;
           const to = event.squareTo;
 
-          // optimistic local apply (keeps current feel)
+          // optimistic local apply (keeps same feel)
           const mv = game.move({ from, to, promotion: "q" });
           if (!mv) {
             sys("illegal move");
@@ -723,7 +729,9 @@
       }
 
       sendBtn.onclick = sendChat;
-      chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+      chatInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") sendChat();
+      });
 
       // auto-join from URL
       const roomParam = new URL(location.href).searchParams.get("room");
