@@ -355,18 +355,15 @@
         updateTopPills(0);
       }
 
-      // ---------- Board (FIX: assetsUrl + sprite + forced setPosition) ----------
+      // ---------- Board ----------
       const boardEl = document.getElementById("board");
-
       const board = new Chessboard(boardEl, {
-        assetsUrl: "/cm-assets/", // ✅ makes cm-chessboard resolve assets correctly
+        assetsUrl: "/cm-assets/",
         position: FEN.start,
         orientation: COLOR.white,
         style: { borderType: "thin" },
-        sprite: { url: "/cm-assets/pieces/staunty.svg" }, // ✅ explicit piece sprite
+        sprite: { url: "/cm-assets/pieces/staunty.svg" },
       });
-
-      // Force position set after init (kills the “grid only” failure mode)
       board.setPosition(FEN.start);
 
       const game = new Chess();
@@ -382,7 +379,7 @@
       }
 
       function canMoveNow() {
-        const turn = game.turn(); // "w"|"b"
+        const turn = game.turn();
         if (myRole === "white") return turn === "w";
         if (myRole === "black") return turn === "b";
         return false;
@@ -406,33 +403,20 @@
         evalBlackFill.style.width = `${b}%`;
         evalNumEl.textContent = label ? label : fmtEval(cp);
       }
-
       setEvalBarFromCp(0);
 
-      // ---------- Stockfish (FIX: Blob worker to bypass cross-origin Worker restrictions) ----------
+      // ---------- Stockfish (same-origin worker: /stockfish.js) ----------
       let sf = null;
       let evalJob = 0;
       let accepting = false;
 
-      async function createWorkerFromRemoteScript(remoteUrl) {
-        // Fetch JS text, wrap in Blob -> same-origin worker
-        const res = await fetch(remoteUrl, { cache: "force-cache" });
-        if (!res.ok) throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
-        const code = await res.text();
-        const blob = new Blob([code], { type: "application/javascript" });
-        const blobUrl = URL.createObjectURL(blob);
-        return new Worker(blobUrl);
-      }
-
-      async function initStockfish() {
+      function initStockfish() {
         engineStatusEl.textContent = "starting…";
-        const remote = "https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish.js";
-
         try {
-          sf = await createWorkerFromRemoteScript(remote);
+          sf = new Worker("/stockfish.js");
         } catch (e) {
           engineStatusEl.textContent = "error";
-          err("Stockfish failed to start: " + (e?.message || e));
+          err("Stockfish Worker failed to construct: " + (e?.message || e));
           return;
         }
 
@@ -443,8 +427,8 @@
           if (line === "readyok") {
             engineReady = true;
             engineStatusEl.textContent = "ready";
-            requestEval(game.fen());
             sys("engine ready");
+            requestEval(game.fen());
             return;
           }
 
@@ -457,7 +441,6 @@
               setEvalBarFromCp(mateN > 0 ? 600 : -600, { label: mateText });
               return;
             }
-
             const mCp = line.match(/score cp (-?\d+)/);
             if (mCp) {
               const cp = parseInt(mCp[1], 10);
@@ -494,11 +477,6 @@
       initStockfish();
 
       // ---------- Socket ----------
-      if (typeof io === "undefined") {
-        err("Socket.IO client did not load: /socket.io/socket.io.js failed.");
-        throw new Error("io is undefined");
-      }
-
       const socket = io({ transports: ["polling", "websocket"] });
 
       socket.on("connect", () => sys("socket connected"));
@@ -678,7 +656,7 @@
         socket.emit("room:join", { room: code });
       }
 
-      // initial UI
+      // init UI
       setMode("idle");
       updateTopPills(0);
       resetLocalGame();
