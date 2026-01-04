@@ -183,6 +183,9 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chess.js@0.10.3/chess.min.js"></script>
+
+    <!-- IMPORTANT: stockfish.wasm expects stockfish.js/stockfish.worker.js/stockfish.wasm in SAME dir -->
+    <script src="/engine/stockfish.js"></script>
   </head>
 
   <body>
@@ -405,77 +408,62 @@
       }
       setEvalBarFromCp(0);
 
-      // ---------- Stockfish (same-origin vendored worker, {cmd} protocol) ----------
+      // ---------- Stockfish (stockfish.wasm official API) ----------
       let sf = null;
       let evalJob = 0;
       let accepting = false;
 
-      function sfSend(command) {
-        if (!sf) return;
-        sf.postMessage({ cmd: command });
-      }
-
-      function normalizeWorkerLine(msg) {
-        if (typeof msg === "string") return msg;
-        if (msg && typeof msg === "object") {
-          if (typeof msg.data === "string") return msg.data;
-          if (typeof msg.stdout === "string") return msg.stdout;
-          if (typeof msg.text === "string") return msg.text;
-        }
-        try { return String(msg); } catch { return ""; }
-      }
-
       function initStockfish() {
         engineStatusEl.textContent = "starting…";
-        try {
-          sf = new Worker("/engine/stockfish.worker.js");
-        } catch (e) {
+
+        if (typeof window.Stockfish !== "function") {
           engineStatusEl.textContent = "error";
-          err("Stockfish Worker failed to construct: " + (e?.message || e));
+          err("Stockfish() not found. Make sure /engine/stockfish.js is loading.");
           return;
         }
 
-        sf.onmessage = (e) => {
-          const line = normalizeWorkerLine(e.data);
+        window.Stockfish()
+          .then((engine) => {
+            sf = engine;
 
-          if (line === "uciok") sfSend("isready");
-          if (line === "readyok") {
-            engineReady = true;
-            engineStatusEl.textContent = "ready";
-            sys("engine ready");
-            requestEval(game.fen());
-            return;
-          }
+            sf.addMessageListener((line) => {
+              if (line === "uciok") sf.postMessage("isready");
+              if (line === "readyok") {
+                engineReady = true;
+                engineStatusEl.textContent = "ready";
+                sys("engine ready");
+                requestEval(game.fen());
+                return;
+              }
 
-          if (!accepting) return;
+              if (!accepting) return;
 
-          if (line.startsWith("info") && line.includes("score")) {
-            const mMate = line.match(/score mate (-?\d+)/);
-            if (mMate) {
-              const mateN = parseInt(mMate[1], 10);
-              const mateText = (mateN > 0 ? "+M" : "-M") + Math.abs(mateN);
-              setEvalBarFromCp(mateN > 0 ? 600 : -600, { label: mateText });
-              return;
-            }
+              if (typeof line === "string" && line.startsWith("info") && line.includes("score")) {
+                const mMate = line.match(/score mate (-?\d+)/);
+                if (mMate) {
+                  const mateN = parseInt(mMate[1], 10);
+                  const mateText = (mateN > 0 ? "+M" : "-M") + Math.abs(mateN);
+                  setEvalBarFromCp(mateN > 0 ? 600 : -600, { label: mateText });
+                  return;
+                }
 
-            const mCp = line.match(/score cp (-?\d+)/);
-            if (mCp) {
-              const cp = parseInt(mCp[1], 10);
-              // keep displayed eval in White POV
-              const whitePov = game.turn() === "w" ? cp : -cp;
-              setEvalBarFromCp(whitePov);
-            }
-          }
-        };
+                const mCp = line.match(/score cp (-?\d+)/);
+                if (mCp) {
+                  const cp = parseInt(mCp[1], 10);
+                  // keep displayed eval in White POV
+                  const whitePov = game.turn() === "w" ? cp : -cp;
+                  setEvalBarFromCp(whitePov);
+                }
+              }
+            });
 
-        sf.onerror = (e) => {
-          engineStatusEl.textContent = "error";
-          const msg = `Stockfish worker error: ${e.message || "(no message)"} @ ${e.filename || "(no file)"}:${e.lineno || "?"}:${e.colno || "?"}`;
-          err(msg);
-          console.error("stockfish worker error", e);
-        };
-
-        sfSend("uci");
+            sf.postMessage("uci");
+          })
+          .catch((e) => {
+            engineStatusEl.textContent = "error";
+            err("Stockfish failed to start: " + (e?.message || String(e)));
+            console.error("Stockfish init error:", e);
+          });
       }
 
       function requestEval(fen) {
@@ -488,10 +476,10 @@
           if (jobId === evalJob) accepting = false;
         }, 2500);
 
-        sfSend("stop");
-        sfSend("ucinewgame");
-        sfSend("position fen " + fen);
-        sfSend("go depth 12");
+        sf.postMessage("stop");
+        sf.postMessage("ucinewgame");
+        sf.postMessage("position fen " + fen);
+        sf.postMessage("go depth 12");
       }
 
       initStockfish();
