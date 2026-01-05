@@ -75,6 +75,7 @@
         justify-content: space-between;
         align-items: center;
         gap: 10px;
+        flex: 0 0 auto;
       }
 
       .title { font-size: 16px; font-weight: 800; letter-spacing: 0.3px; }
@@ -126,7 +127,18 @@
         min-height: 0;
       }
 
-      .panelBody { padding: 12px 14px; }
+      /* ✅ Controls card should never clip its join row */
+      .controlsCard {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 0;
+      }
+
+      .panelBody {
+        padding: 12px 14px;
+        min-height: 0;
+        overflow: auto; /* ✅ internal scroll if needed; prevents clipping */
+      }
 
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
@@ -138,6 +150,7 @@
         padding: 10px 12px;
         border-radius: 12px;
         cursor: pointer;
+        flex: 0 0 auto;
       }
       button.primary {
         border-color: rgba(124,92,255,0.45);
@@ -154,8 +167,8 @@
       button:disabled { opacity: 0.45; cursor: not-allowed; }
 
       input[type="text"] {
-        flex: 1;
-        min-width: 160px;
+        flex: 1 1 160px;
+        min-width: 140px;
         padding: 10px 12px;
         border-radius: 12px;
         border: 1px solid var(--border);
@@ -267,8 +280,6 @@
     </style>
 
     <script src="/socket.io/socket.io.js"></script>
-
-    <!-- ✅ Use the UMD that defines window.Chess -->
     <script src="https://cdn.jsdelivr.net/npm/chess.js@0.10.3/chess.min.js"></script>
   </head>
 
@@ -294,7 +305,7 @@
       </div>
 
       <div class="right">
-        <div class="card">
+        <div class="card controlsCard">
           <div class="header">
             <div class="title">Controls</div>
             <div class="pillRow">
@@ -422,7 +433,7 @@
 
       // ---------- State ----------
       let currentRoom = null;
-      let myRole = null; // "white" | "black" | null (spectator)
+      let myRole = null; // "white" | "black" | null
       let mode = "idle"; // idle | searching | matched
       let moveNumber = 0;
       let gameOver = false;
@@ -436,12 +447,11 @@
 
         const searching = mode === "searching";
         const matched = mode === "matched";
+        const isPlayer = myRole === "white" || myRole === "black";
 
         playOnlineBtn.disabled = searching;
         cancelBtn.disabled = !searching;
 
-        // enable/disable draw+resign only when seated as a player and game not over
-        const isPlayer = myRole === "white" || myRole === "black";
         drawBtn.disabled = !(matched && !gameOver && isPlayer);
         resignBtn.disabled = !(matched && !gameOver && isPlayer);
 
@@ -473,10 +483,10 @@
         if (gameOver) return;
         gameOver = true;
         sys(reason);
-        setMode(mode); // refresh button states
+        setMode(mode);
       }
 
-      // ---------- Move sound (chess.com vibe) ----------
+      // ---------- Move sound ----------
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const audioCtx = AudioCtx ? new AudioCtx() : null;
 
@@ -520,12 +530,9 @@
         board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
       }
 
-      // ✅ IMPORTANT CHANGE:
-      // Always allow eval once there is at least one move in history.
-      // (Do NOT use moveNumber, because some clients can be "behind" moveNumber until they play,
-      // but they still have the correct FEN.)
+      // ✅ FIXED: do NOT use game.history() (history is empty after game.load(fen))
       function shouldShowEval() {
-        return game.history().length > 0;
+        return moveNumber > 0;
       }
 
       // ---------- Last move highlight ----------
@@ -615,9 +622,6 @@
 
           if (!accepting) return;
           if (!line.startsWith("info") || !line.includes("score")) return;
-
-          // ✅ IMPORTANT CHANGE:
-          // Only hide eval before the first move, based on game history (not moveNumber / role / turn).
           if (!shouldShowEval()) return;
 
           const mMate = line.match(/score mate (-?\d+)/);
@@ -722,7 +726,6 @@
         sys(`room created: ${room}`);
       });
 
-      // Server may send role "w"/"b" for seated players, or "s" / null / undefined for spectators.
       socket.on("room:joined", ({ room, role, players }) => {
         currentRoom = room;
         myRole = role === "w" ? "white" : role === "b" ? "black" : null;
@@ -731,8 +734,6 @@
 
         setMode("matched");
         updateTopPills(players ?? null);
-
-        // spectators view from white by default
         setOrientation();
         resetLocalGame();
         socket.emit("state:request", { room: currentRoom });
@@ -749,19 +750,17 @@
       });
 
       socket.on("room:error", ({ error }) => sys("room error: " + error));
-      socket.on("opponent:left", () => {
-        sys("opponent left");
-      });
+      socket.on("opponent:left", () => sys("opponent left"));
 
       socket.on("state:sync", (s) => {
         try {
           if (!s || !s.fen) return;
 
-          // ✅ Load fen first, then eval it (for everyone)
-          game.load(s.fen);
-          board.setPosition(game.fen());
+          // ✅ moveNumber must be updated BEFORE eval gating is checked
           moveNumber = typeof s.moveNumber === "number" ? s.moveNumber : moveNumber;
 
+          game.load(s.fen);
+          board.setPosition(game.fen());
           requestEval(game.fen());
 
           if (typeof s.players === "object") {
@@ -776,32 +775,28 @@
       socket.on("move:accepted", ({ fen, moveNumber: mn, move }) => {
         if (!fen) return;
 
-        // highlight + sound
+        // ✅ update moveNumber FIRST (eval gating)
+        if (typeof mn === "number") moveNumber = mn;
+
         if (move && move.from && move.to) {
           playMoveSound();
           showLastMove(move.from, move.to);
         }
 
-        // ✅ Load fen first, then eval it (for everyone)
         game.load(fen);
         board.setPosition(game.fen());
-        if (typeof mn === "number") moveNumber = mn;
-
         requestEval(game.fen());
       });
 
       socket.on("move:rejected", (p) => {
         try {
           if (p && p.fen) {
+            if (typeof p.moveNumber === "number") moveNumber = p.moveNumber;
             game.load(p.fen);
             board.setPosition(game.fen());
-            moveNumber = typeof p.moveNumber === "number" ? p.moveNumber : moveNumber;
-
             requestEval(game.fen());
           }
-
           clearLastMoveMarkers();
-
           if (p && p.reason) sys("move rejected: " + p.reason);
         } catch (e) {
           console.error("move:rejected error", e);
@@ -819,72 +814,11 @@
         }
       });
 
-      // -----------------------------
-      // ✅ Draw + Resign protocol (client side)
-      // -----------------------------
-
-      socket.on("draw:offer", (payload = {}) => {
-        if (!currentRoom) return;
-        if (payload.room && payload.room !== currentRoom) return;
-        if (gameOver) return;
-
-        // only seated players can respond
-        if (!(myRole === "white" || myRole === "black")) return;
-
-        sys("draw offer received");
-        const accept = window.confirm("Opponent offered a draw. Accept?");
-        socket.emit("draw:response", { room: currentRoom, accept });
-
-        if (accept) endGameLocal("draw agreed");
-        else sys("draw declined");
-      });
-
-      socket.on("draw:response", (payload = {}) => {
-        if (!currentRoom) return;
-        if (payload.room && payload.room !== currentRoom) return;
-
-        const accept = !!payload.accept;
-        outgoingDrawPending = false;
-        setMode(mode);
-
-        if (accept) endGameLocal("draw agreed");
-        else sys("draw declined");
-      });
-
-      socket.on("draw:accepted", (payload = {}) => {
-        if (!currentRoom) return;
-        if (payload.room && payload.room !== currentRoom) return;
-        outgoingDrawPending = false;
-        endGameLocal("draw agreed");
-      });
-
-      socket.on("draw:declined", (payload = {}) => {
-        if (!currentRoom) return;
-        if (payload.room && payload.room !== currentRoom) return;
-        outgoingDrawPending = false;
-        sys("draw declined");
-        setMode(mode);
-      });
-
-      socket.on("game:resigned", (payload = {}) => {
-        if (!currentRoom) return;
-        if (payload.room && payload.room !== currentRoom) return;
-        const by = payload.by ? String(payload.by) : "a player";
-        endGameLocal(`${by} resigned`);
-      });
-
-      socket.on("game:ended", (payload = {}) => {
-        if (!currentRoom) return;
-        if (payload.room && payload.room !== currentRoom) return;
-        const reason = payload.reason ? String(payload.reason) : "game ended";
-        endGameLocal(reason);
-      });
-
-      // Move input (only seated players)
+      // Move input
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
-        if (!(myRole === "white" || myRole === "black")) return false; // spectators can't move
+        if (!(myRole === "white" || myRole === "black")) return false;
         if (gameOver) return false;
 
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return canMoveNow();
@@ -906,7 +840,6 @@
             return false;
           }
 
-          // optimistic UI
           board.setPosition(game.fen());
           requestEval(game.fen());
           playMoveSound();
@@ -959,28 +892,6 @@
         history.replaceState({}, "", u);
         await navigator.clipboard.writeText(u.toString());
         sys("room link copied");
-      };
-
-      drawBtn.onclick = () => {
-        if (!currentRoom || mode !== "matched" || gameOver) return;
-        if (!(myRole === "white" || myRole === "black")) return;
-        if (outgoingDrawPending) return;
-
-        outgoingDrawPending = true;
-        setMode(mode);
-        sys("draw offer sent");
-        socket.emit("draw:offer", { room: currentRoom });
-      };
-
-      resignBtn.onclick = () => {
-        if (!currentRoom || mode !== "matched" || gameOver) return;
-        if (!(myRole === "white" || myRole === "black")) return;
-
-        const ok = window.confirm("Resign this game?");
-        if (!ok) return;
-
-        socket.emit("game:resign", { room: currentRoom });
-        endGameLocal("you resigned");
       };
 
       function sendChat() {
