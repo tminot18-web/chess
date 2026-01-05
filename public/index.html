@@ -10,6 +10,12 @@
       rel="stylesheet"
       href="https://unpkg.com/cm-chessboard@8.7.8/assets/chessboard.css"
     />
+    <!-- ✅ Markers extension CSS (needed for last-move highlight markers) -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/cm-chessboard@8.7.8/assets/extensions/markers/markers.css"
+    />
+
     <link rel="icon" href="data:," />
 
     <style>
@@ -229,6 +235,24 @@
 
       .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
 
+      /* ✅ Chess.com style last-move highlights (Markers extension)
+         We use:
+           - frame marker for FROM square (outline)
+           - square marker for TO square (filled)
+      */
+      .cm-chessboard .marker.frame {
+        stroke: rgba(255, 220, 0, 0.95) !important;
+        stroke-width: 7px !important;
+        fill: transparent !important;
+        opacity: 1 !important;
+      }
+      .cm-chessboard .marker.square {
+        fill: rgba(255, 220, 0, 0.38) !important;
+        stroke: rgba(255, 220, 0, 0.65) !important;
+        stroke-width: 2px !important;
+        opacity: 1 !important;
+      }
+
       @media (max-width: 1050px) {
         :root { --rightW: 100%; }
         .wrap {
@@ -313,7 +337,7 @@
             </div>
 
             <div style="color: var(--muted); font-size: 12px">
-              Matchmaking waits for 2 players. Friend rooms use ?room=CODE. Spectators can join anytime.
+              Matchmaking waits for 2 players. Friend rooms use ?room=CODE.
             </div>
           </div>
         </div>
@@ -336,6 +360,7 @@
 
     <script type="module">
       import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
+      import { Markers, MARKER_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/extensions/markers/Markers.js";
 
       // ---------- DOM ----------
       const feedEl = document.getElementById("feed");
@@ -398,17 +423,13 @@
 
       // ---------- State ----------
       let currentRoom = null;
-      let myRole = null; // "white" | "black" | "spectator" | null
+      let myRole = null; // "white" | "black"
       let mode = "idle"; // idle | searching | matched
       let moveNumber = 0;
       let gameOver = false;
 
       // draw offer tracking
       let outgoingDrawPending = false;
-
-      function isPlayerRole() {
-        return myRole === "white" || myRole === "black";
-      }
 
       function setMode(next) {
         mode = next;
@@ -420,9 +441,9 @@
         playOnlineBtn.disabled = searching;
         cancelBtn.disabled = !searching;
 
-        // ✅ enable/disable draw+resign only when YOU are a player, matched, and not over
-        drawBtn.disabled = !(matched && !gameOver && isPlayerRole());
-        resignBtn.disabled = !(matched && !gameOver && isPlayerRole());
+        // enable/disable draw+resign only when in a matched game and not over
+        drawBtn.disabled = !(matched && !gameOver);
+        resignBtn.disabled = !(matched && !gameOver);
 
         copyBtn.disabled = !currentRoom;
       }
@@ -455,6 +476,33 @@
         setMode(mode); // refresh button states
       }
 
+      // ---------- Move sound (chess.com vibe) ----------
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = AudioCtx ? new AudioCtx() : null;
+
+      function playMoveSound() {
+        if (!audioCtx) return;
+        // Some browsers need a user gesture before audio plays:
+        if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+        const now = audioCtx.currentTime;
+
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(560, now);
+
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.065);
+      }
+
       // ---------- Board ----------
       const boardEl = document.getElementById("board");
 
@@ -463,18 +511,44 @@
         position: FEN.start,
         orientation: COLOR.white,
         style: { borderType: "thin" },
+        extensions: [{ class: Markers }],
       });
       board.setPosition(FEN.start);
 
       const game = new window.Chess();
 
       function setOrientation() {
-        // spectators default to white orientation
         board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
       }
 
       function shouldShowEval() {
         return game.history().length > 0;
+      }
+
+      // ---------- Last move highlight ----------
+      let lastMove = null; // { from, to }
+      function clearLastMoveMarkers() {
+        // We only use these marker types for last-move UI.
+        try {
+          board.removeMarkers(MARKER_TYPE.frame);
+          board.removeMarkers(MARKER_TYPE.square);
+        } catch {}
+      }
+
+      function showLastMove(from, to) {
+        if (!from || !to) return;
+        lastMove = { from, to };
+
+        clearLastMoveMarkers();
+
+        // chess.com-like: FROM outline, TO filled
+        try {
+          board.addMarker(MARKER_TYPE.frame, from);
+          board.addMarker(MARKER_TYPE.square, to);
+        } catch (e) {
+          // If markers API changes, fail gracefully
+          console.warn("marker highlight failed", e);
+        }
       }
 
       // ---------- Eval UI ----------
@@ -501,13 +575,14 @@
         outgoingDrawPending = false;
         board.setPosition(game.fen());
         setEvalFromCp(0);
+        clearLastMoveMarkers();
+        lastMove = null;
         requestEval(game.fen());
         setMode(mode);
       }
 
       function canMoveNow() {
         if (gameOver) return false;
-        if (!isPlayerRole()) return false;
         const turn = game.turn();
         if (myRole === "white") return turn === "w";
         if (myRole === "black") return turn === "b";
@@ -651,11 +726,7 @@
 
       socket.on("room:joined", ({ room, role, players }) => {
         currentRoom = room;
-
-        if (role === "w") myRole = "white";
-        else if (role === "b") myRole = "black";
-        else myRole = "spectator"; // ✅ spectator support
-
+        myRole = role === "w" ? "white" : "black";
         gameOver = false;
         outgoingDrawPending = false;
 
@@ -688,6 +759,10 @@
           board.setPosition(game.fen());
           moveNumber = typeof s.moveNumber === "number" ? s.moveNumber : 0;
           requestEval(game.fen());
+
+          // no move info included in state sync, so keep last highlight as-is
+          // (or clear if you want: clearLastMoveMarkers();)
+
           if (typeof s.players === "object") {
             const players = (s.players.w ? 1 : 0) + (s.players.b ? 1 : 0);
             updateTopPills(players);
@@ -697,8 +772,15 @@
         }
       });
 
-      socket.on("move:accepted", ({ fen, moveNumber: mn }) => {
+      socket.on("move:accepted", ({ fen, moveNumber: mn, move }) => {
         if (!fen) return;
+
+        // play sound + last move highlight (when we have move data)
+        if (move && move.from && move.to) {
+          playMoveSound();
+          showLastMove(move.from, move.to);
+        }
+
         game.load(fen);
         board.setPosition(game.fen());
         if (typeof mn === "number") moveNumber = mn;
@@ -713,6 +795,12 @@
             moveNumber = typeof p.moveNumber === "number" ? p.moveNumber : moveNumber;
             requestEval(game.fen());
           }
+
+          // If a move got rejected, clear the optimistic highlight.
+          // The next accepted move will re-set it correctly.
+          clearLastMoveMarkers();
+          lastMove = null;
+
           if (p && p.reason) sys("move rejected: " + p.reason);
         } catch (e) {
           console.error("move:rejected error", e);
@@ -740,14 +828,9 @@
         if (payload.room && payload.room !== currentRoom) return;
         if (gameOver) return;
 
-        // spectators should still see the message, but not be prompted
-        if (!isPlayerRole()) {
-          sys("draw offer sent between players");
-          return;
-        }
-
         sys("draw offer received");
 
+        // Simple UX: confirm dialog. Replace with custom modal later.
         const accept = window.confirm("Opponent offered a draw. Accept?");
         socket.emit("draw:response", { room: currentRoom, accept });
 
@@ -758,13 +841,14 @@
         }
       });
 
+      // Response to our draw offer (if server forwards it)
       socket.on("draw:response", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
 
         const accept = !!payload.accept;
         outgoingDrawPending = false;
-        drawBtn.disabled = !(mode === "matched" && !gameOver && isPlayerRole());
+        drawBtn.disabled = !(mode === "matched" && !gameOver);
 
         if (accept) {
           endGameLocal("draw agreed");
@@ -773,6 +857,7 @@
         }
       });
 
+      // If server chooses to broadcast a final draw event instead
       socket.on("draw:accepted", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
@@ -785,12 +870,14 @@
         if (payload.room && payload.room !== currentRoom) return;
         outgoingDrawPending = false;
         sys("draw declined");
-        drawBtn.disabled = !(mode === "matched" && !gameOver && isPlayerRole());
+        drawBtn.disabled = !(mode === "matched" && !gameOver);
       });
 
+      // If server broadcasts resign info
       socket.on("game:resigned", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
+
         const by = payload.by ? String(payload.by) : "a player";
         endGameLocal(`${by} resigned`);
       });
@@ -806,7 +893,7 @@
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
-        if (!isPlayerRole()) return false; // ✅ spectators never move
+        if (!(myRole === "white" || myRole === "black")) return false;
         if (gameOver) return false;
 
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return canMoveNow();
@@ -828,8 +915,11 @@
             return false;
           }
 
+          // optimistic UI
           board.setPosition(game.fen());
           requestEval(game.fen());
+          playMoveSound();
+          showLastMove(from, to);
 
           socket.emit("move:submit", {
             room: currentRoom,
@@ -880,10 +970,9 @@
         sys("room link copied");
       };
 
-      // ✅ Draw button: offer draw (players only; button already disabled for spectators)
+      // ✅ Draw button: offer draw
       drawBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
-        if (!isPlayerRole()) return;
         if (outgoingDrawPending) return;
 
         outgoingDrawPending = true;
@@ -892,10 +981,9 @@
         socket.emit("draw:offer", { room: currentRoom });
       };
 
-      // ✅ Resign button: resign immediately (players only)
+      // ✅ Resign button: resign immediately
       resignBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
-        if (!isPlayerRole()) return;
 
         const ok = window.confirm("Resign this game?");
         if (!ok) return;
