@@ -248,11 +248,7 @@
 
       .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
 
-      /* ✅ Chess.com style last-move highlights (Markers extension)
-         We use:
-           - frame marker for FROM square (outline)
-           - square marker for TO square (filled)
-      */
+      /* ✅ Chess.com style last-move highlights */
       .cm-chessboard .marker.frame {
         stroke: rgba(255, 220, 0, 0.95) !important;
         stroke-width: 7px !important;
@@ -438,7 +434,6 @@
       let moveNumber = 0;
       let gameOver = false;
 
-      // draw offer tracking
       let outgoingDrawPending = false;
 
       function setMode(next) {
@@ -530,7 +525,6 @@
         board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
       }
 
-      // ✅ FIXED: do NOT use game.history() (history is empty after game.load(fen))
       function shouldShowEval() {
         return moveNumber > 0;
       }
@@ -597,6 +591,9 @@
       let evalJob = 0;
       let accepting = false;
 
+      // ✅ Freeze the side-to-move at request time to avoid POV desync
+      let evalTurnAtRequest = "w"; // "w" | "b"
+
       function initStockfish() {
         engineStatusEl.textContent = "starting…";
         try {
@@ -628,14 +625,20 @@
           if (mMate) {
             const mateN = parseInt(mMate[1], 10);
             const mateText = (mateN > 0 ? "+M" : "-M") + Math.abs(mateN);
-            setEvalFromCp(mateN > 0 ? 600 : -600, mateText);
+
+            // If it's black to move at request time, mate score is from black POV -> flip to white POV
+            const whitePovMate = evalTurnAtRequest === "w" ? (mateN > 0 ? 600 : -600) : (mateN > 0 ? -600 : 600);
+            setEvalFromCp(whitePovMate, mateText);
             return;
           }
 
           const mCp = line.match(/score cp (-?\d+)/);
           if (mCp) {
             const cp = parseInt(mCp[1], 10);
-            const whitePov = game.turn() === "w" ? cp : -cp;
+
+            // ✅ UCI score is from side-to-move POV (at the time we started the search).
+            // Convert to WHITE POV consistently for all clients.
+            const whitePov = evalTurnAtRequest === "w" ? cp : -cp;
             setEvalFromCp(whitePov);
           }
         };
@@ -654,6 +657,10 @@
 
         evalJob += 1;
         const jobId = evalJob;
+
+        // ✅ freeze turn at request time (prevents sign flip drift across clients)
+        evalTurnAtRequest = game.turn();
+
         accepting = true;
         setTimeout(() => {
           if (jobId === evalJob) accepting = false;
@@ -756,7 +763,6 @@
         try {
           if (!s || !s.fen) return;
 
-          // ✅ moveNumber must be updated BEFORE eval gating is checked
           moveNumber = typeof s.moveNumber === "number" ? s.moveNumber : moveNumber;
 
           game.load(s.fen);
@@ -775,7 +781,6 @@
       socket.on("move:accepted", ({ fen, moveNumber: mn, move }) => {
         if (!fen) return;
 
-        // ✅ update moveNumber FIRST (eval gating)
         if (typeof mn === "number") moveNumber = mn;
 
         if (move && move.from && move.to) {
