@@ -13,7 +13,6 @@
       rel="stylesheet"
       href="https://unpkg.com/cm-chessboard@8.7.8/assets/extensions/markers/markers.css"
     />
-
     <link rel="icon" href="data:," />
 
     <style>
@@ -29,8 +28,8 @@
         --pad: 14px;
         --rightW: 360px;
 
-        /* chat height = half of right column */
-        --chatFrac: 0.50;
+        /* ✅ Give Controls more vertical space */
+        --chatFrac: 0.40;
       }
 
       * { box-sizing: border-box; }
@@ -65,13 +64,7 @@
         min-height: 0;
         overflow: hidden;
       }
-      
-      .panelBody {
-        padding: 12px 14px;
-        overflow-y: auto;
-        max-height: 100%;
-      }
-      
+
       .header {
         padding: 14px 16px;
         border-bottom: 1px solid var(--border);
@@ -127,18 +120,19 @@
         min-height: 0;
       }
 
-      /* ✅ KEY FIX: make Controls card constrain body height */
+      /* ✅ Controls card: header + flexible body */
       .controlsCard {
         display: grid;
-        grid-template-rows: auto 1fr; /* header + scrollable body */
+        grid-template-rows: auto 1fr;
         min-height: 0;
       }
 
+      /* ✅ Make body a flex column and pin join section to bottom */
       .panelBody {
         padding: 12px 14px;
-        min-height: 0;          /* ✅ allow it to shrink */
-        overflow-y: auto;       /* ✅ scroll inside card */
-        overscroll-behavior: contain;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
       }
 
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -177,22 +171,6 @@
         outline: none;
       }
 
-      /* ✅ Join row visibility fix */
-      .joinRow { align-items: stretch; }
-      .joinGroup { display: flex; gap: 8px; flex: 1; }
-      .joinGroup input {
-        flex: 1;
-        height: 44px;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .joinGroup button {
-        height: 44px;
-        padding: 0 18px;
-        font-weight: 800;
-      }
-
       .kv { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 10px; }
       .kv .k { color: var(--muted); font-size: 12px; }
       .kv .v { font-weight: 800; font-size: 28px; }
@@ -222,6 +200,24 @@
         left: calc(50% - 1px);
         width: 2px;
         background: rgba(124,92,255,0.85);
+      }
+
+      /* ✅ Join row always visible & clean */
+      .joinRow { align-items: stretch; }
+      .joinGroup { display: flex; gap: 8px; flex: 1; }
+      .joinGroup input {
+        flex: 1;
+        height: 44px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        min-width: 0;
+      }
+      .joinGroup button {
+        height: 44px;
+        padding: 0 18px;
+        font-weight: 800;
+        white-space: nowrap;
       }
 
       .chatCard {
@@ -264,6 +260,7 @@
 
       .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
 
+      /* last-move markers */
       .cm-chessboard .marker.frame {
         stroke: rgba(255, 220, 0, 0.95) !important;
         stroke-width: 7px !important;
@@ -316,7 +313,6 @@
       </div>
 
       <div class="right">
-        <!-- ✅ added controlsCard class -->
         <div class="card controlsCard">
           <div class="header">
             <div class="title">Controls</div>
@@ -329,10 +325,8 @@
             <div class="row">
               <button id="playOnlineBtn" class="primary">Play Online</button>
               <button id="cancelBtn" class="danger" disabled>Cancel</button>
-
               <button id="drawBtn" class="neutral" disabled>Draw</button>
               <button id="resignBtn" class="danger" disabled>Resign</button>
-
               <button id="copyBtn" disabled>Copy Link</button>
             </div>
 
@@ -350,19 +344,22 @@
               You can only move when it’s your turn.
             </div>
 
-            <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
+            <!-- ✅ pinned footer: always visible -->
+            <div style="margin-top:auto">
+              <hr style="border:none;border-top:1px solid var(--border);margin:10px 0" />
 
-            <div class="row joinRow" style="margin-bottom: 8px">
-              <button id="createBtn">Create Room</button>
+              <div class="row joinRow" style="margin-bottom: 8px">
+                <button id="createBtn">Create Room</button>
 
-              <div class="joinGroup">
-                <input id="joinInput" type="text" placeholder="ROOM CODE" autocomplete="off" />
-                <button id="joinBtn" class="primary">Join</button>
+                <div class="joinGroup">
+                  <input id="joinInput" type="text" placeholder="ROOM CODE" autocomplete="off" />
+                  <button id="joinBtn" class="primary">Join</button>
+                </div>
               </div>
-            </div>
 
-            <div style="color: var(--muted); font-size: 12px">
-              Matchmaking waits for 2 players. Friend rooms use ?room=CODE.
+              <div style="color: var(--muted); font-size: 12px">
+                Matchmaking waits for 2 players. Friend rooms use ?room=CODE.
+              </div>
             </div>
           </div>
         </div>
@@ -387,6 +384,7 @@
       import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
       import { Markers, MARKER_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/extensions/markers/Markers.js";
 
+      // ---------- DOM ----------
       const feedEl = document.getElementById("feed");
       const roomEl = document.getElementById("roomPill");
       const roleEl = document.getElementById("rolePill");
@@ -411,6 +409,7 @@
       const chatInput = document.getElementById("chatInput");
       const sendBtn = document.getElementById("sendBtn");
 
+      // ---------- Feed helpers ----------
       function addMsg(kind, from, text) {
         const d = document.createElement("div");
         d.className = "msg";
@@ -444,11 +443,13 @@
 
       sys("booted");
 
+      // ---------- State ----------
       let currentRoom = null;
-      let myRole = null;
-      let mode = "idle";
+      let myRole = null; // "white" | "black"
+      let mode = "idle"; // idle | searching | matched
       let moveNumber = 0;
       let gameOver = false;
+
       let outgoingDrawPending = false;
 
       function setMode(next) {
@@ -495,6 +496,7 @@
         setMode(mode);
       }
 
+      // ---------- Move sound ----------
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const audioCtx = AudioCtx ? new AudioCtx() : null;
 
@@ -520,6 +522,7 @@
         osc.stop(now + 0.065);
       }
 
+      // ---------- Board ----------
       const boardEl = document.getElementById("board");
 
       const board = new Chessboard(boardEl, {
@@ -541,6 +544,7 @@
         return game.history().length > 0;
       }
 
+      // ---------- Last move highlight ----------
       let lastMove = null;
       function clearLastMoveMarkers() {
         try {
@@ -561,6 +565,7 @@
         }
       }
 
+      // ---------- Eval UI ----------
       function fmtEval(cp) {
         const v = cp / 100;
         const sign = v > 0 ? "+" : "";
@@ -597,6 +602,7 @@
         return false;
       }
 
+      // ---------- Stockfish worker ----------
       let sf = null;
       let engineReady = false;
       let evalJob = 0;
@@ -671,6 +677,7 @@
 
       initStockfish();
 
+      // ---------- Socket ----------
       const socket = io({ transports: ["polling", "websocket"] });
 
       socket.on("connect", () => sys("socket connected"));
@@ -934,7 +941,6 @@
         socket.emit("room:join", { room: code });
       };
 
-      // allow Enter in join input
       joinInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") joinBtn.click();
       });
