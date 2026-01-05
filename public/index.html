@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess</title>
 
+    <!-- (helps some browsers not cache the html too aggressively) -->
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
     <!-- ✅ Keep cm-chessboard CSS + assets on SAME VERSION as the JS import -->
     <link
       rel="stylesheet"
@@ -591,7 +596,7 @@
       let evalJob = 0;
       let accepting = false;
 
-      // ✅ Freeze the side-to-move at request time to avoid POV desync
+      // ✅ Freeze side-to-move FROM THE FEN WE ACTUALLY SENT (authoritative)
       let evalTurnAtRequest = "w"; // "w" | "b"
 
       function initStockfish() {
@@ -626,8 +631,12 @@
             const mateN = parseInt(mMate[1], 10);
             const mateText = (mateN > 0 ? "+M" : "-M") + Math.abs(mateN);
 
-            // If it's black to move at request time, mate score is from black POV -> flip to white POV
-            const whitePovMate = evalTurnAtRequest === "w" ? (mateN > 0 ? 600 : -600) : (mateN > 0 ? -600 : 600);
+            // Convert to WHITE POV consistently
+            const whitePovMate =
+              evalTurnAtRequest === "w"
+                ? (mateN > 0 ? 600 : -600)
+                : (mateN > 0 ? -600 : 600);
+
             setEvalFromCp(whitePovMate, mateText);
             return;
           }
@@ -636,8 +645,8 @@
           if (mCp) {
             const cp = parseInt(mCp[1], 10);
 
-            // ✅ UCI score is from side-to-move POV (at the time we started the search).
-            // Convert to WHITE POV consistently for all clients.
+            // ✅ UCI score is from side-to-move POV at search start.
+            // Convert to WHITE POV consistently.
             const whitePov = evalTurnAtRequest === "w" ? cp : -cp;
             setEvalFromCp(whitePov);
           }
@@ -658,8 +667,15 @@
         evalJob += 1;
         const jobId = evalJob;
 
-        // ✅ freeze turn at request time (prevents sign flip drift across clients)
-        evalTurnAtRequest = game.turn();
+        // ✅ derive turn from fen (field 2)
+        // fen format: "pieces sideToMove castling enpassant halfmove fullmove"
+        try {
+          const parts = String(fen || "").split(" ");
+          const stm = parts[1];
+          evalTurnAtRequest = stm === "b" ? "b" : "w";
+        } catch {
+          evalTurnAtRequest = "w";
+        }
 
         accepting = true;
         setTimeout(() => {
@@ -767,7 +783,9 @@
 
           game.load(s.fen);
           board.setPosition(game.fen());
-          requestEval(game.fen());
+
+          // ✅ request eval using the *synced fen*, not local derived
+          requestEval(s.fen);
 
           if (typeof s.players === "object") {
             const players = (s.players.w ? 1 : 0) + (s.players.b ? 1 : 0);
@@ -790,7 +808,9 @@
 
         game.load(fen);
         board.setPosition(game.fen());
-        requestEval(game.fen());
+
+        // ✅ eval from authoritative fen
+        requestEval(fen);
       });
 
       socket.on("move:rejected", (p) => {
@@ -799,7 +819,7 @@
             if (typeof p.moveNumber === "number") moveNumber = p.moveNumber;
             game.load(p.fen);
             board.setPosition(game.fen());
-            requestEval(game.fen());
+            requestEval(p.fen);
           }
           clearLastMoveMarkers();
           if (p && p.reason) sys("move rejected: " + p.reason);
@@ -846,7 +866,10 @@
           }
 
           board.setPosition(game.fen());
+
+          // optimistic eval based on current local fen
           requestEval(game.fen());
+
           playMoveSound();
           showLastMove(from, to);
 
