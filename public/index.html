@@ -116,18 +116,16 @@
         overflow: hidden;
       }
 
-      /* ✅ RIGHT COLUMN FIX:
-         Use auto for Controls (so it never clips its contents),
-         and let Chat take the remaining space.
+      /* ✅ RIGHT COLUMN:
+         Controls auto-height (never clips), Chat fills remainder.
       */
       .right {
         display: grid;
-        grid-template-rows: auto 1fr; /* ✅ was % split; that caused clipping */
+        grid-template-rows: auto 1fr;
         gap: var(--gap);
         min-height: 0;
       }
 
-      /* Controls card becomes a column so body can scroll if needed */
       .controlsCard {
         display: flex;
         flex-direction: column;
@@ -137,7 +135,7 @@
       .panelBody {
         padding: 12px 14px;
         min-height: 0;
-        overflow: auto; /* ✅ if a small screen, body scrolls instead of clipping */
+        overflow: auto; /* ✅ small screens: scroll instead of clip */
       }
 
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -168,7 +166,7 @@
 
       input[type="text"] {
         flex: 1;
-        min-width: 0; /* ✅ IMPORTANT: allows input to shrink without overflowing/cutting off buttons */
+        min-width: 0; /* ✅ allow shrink; prevents overflow/cutoff */
         padding: 10px 12px;
         border-radius: 12px;
         border: 1px solid var(--border);
@@ -248,7 +246,7 @@
 
       .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
 
-      /* ✅ Join row: force a clean 3-column layout so JOIN never gets cut off */
+      /* ✅ Join row: never clips/cuts off */
       .joinRow {
         display: grid;
         grid-template-columns: auto 1fr auto;
@@ -259,10 +257,7 @@
       }
       .joinRow > * { min-width: 0; }
 
-      /* ✅ Chess.com style last-move highlights (Markers extension)
-         FROM: frame (outline)
-         TO: square (filled)
-      */
+      /* ✅ Chess.com style last-move highlights */
       .cm-chessboard .marker.frame {
         stroke: rgba(255, 220, 0, 0.95) !important;
         stroke-width: 7px !important;
@@ -276,8 +271,6 @@
         opacity: 1 !important;
       }
 
-      /* Mobile: keep it usable without breaking desktop.
-         Stack columns, but still avoid clipping. */
       @media (max-width: 1050px) {
         :root { --rightW: 100%; }
         .wrap {
@@ -352,7 +345,6 @@
 
             <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
 
-            <!-- ✅ This row will not clip/cut off anymore -->
             <div class="joinRow" style="margin-bottom: 8px">
               <button id="createBtn">Create Room</button>
               <input id="joinInput" type="text" placeholder="ROOM CODE" />
@@ -446,7 +438,7 @@
 
       // ---------- State ----------
       let currentRoom = null;
-      let myRole = null; // "white" | "black"
+      let myRole = null; // "white" | "black" | null (spectator)
       let mode = "idle"; // idle | searching | matched
       let moveNumber = 0;
       let gameOver = false;
@@ -541,8 +533,9 @@
         board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
       }
 
+      // ✅ FIX: after game.load(fen), chess.js history() is empty. Use moveNumber instead.
       function shouldShowEval() {
-        return game.history().length > 0;
+        return moveNumber > 0;
       }
 
       // ---------- Last move highlight ----------
@@ -631,6 +624,8 @@
 
           if (!accepting) return;
           if (!line.startsWith("info") || !line.includes("score")) return;
+
+          // ✅ FIX: gate on moveNumber so BOTH players update eval
           if (!shouldShowEval()) return;
 
           const mMate = line.match(/score mate (-?\d+)/);
@@ -737,7 +732,12 @@
 
       socket.on("room:joined", ({ room, role, players }) => {
         currentRoom = room;
-        myRole = role === "w" ? "white" : "black";
+
+        // role can be null/undefined for spectators depending on server
+        if (role === "w") myRole = "white";
+        else if (role === "b") myRole = "black";
+        else myRole = null;
+
         gameOver = false;
         outgoingDrawPending = false;
 
@@ -751,7 +751,7 @@
         u.searchParams.set("room", currentRoom);
         history.replaceState({}, "", u);
 
-        sys(`joined: ${room} (${myRole})`);
+        sys(`joined: ${room} (${myRole || "spectator"})`);
       });
 
       socket.on("room:update", ({ room, players }) => {
@@ -764,9 +764,12 @@
       socket.on("state:sync", (s) => {
         try {
           if (!s || !s.fen) return;
+
+          // IMPORTANT: update moveNumber BEFORE requestEval so shouldShowEval() works on both clients
+          moveNumber = typeof s.moveNumber === "number" ? s.moveNumber : moveNumber;
+
           game.load(s.fen);
           board.setPosition(game.fen());
-          moveNumber = typeof s.moveNumber === "number" ? s.moveNumber : 0;
           requestEval(game.fen());
 
           if (typeof s.players === "object") {
@@ -781,6 +784,9 @@
       socket.on("move:accepted", ({ fen, moveNumber: mn, move }) => {
         if (!fen) return;
 
+        // update moveNumber first so eval gating is consistent
+        if (typeof mn === "number") moveNumber = mn;
+
         if (move && move.from && move.to) {
           playMoveSound();
           showLastMove(move.from, move.to);
@@ -788,16 +794,17 @@
 
         game.load(fen);
         board.setPosition(game.fen());
-        if (typeof mn === "number") moveNumber = mn;
         requestEval(game.fen());
       });
 
       socket.on("move:rejected", (p) => {
         try {
           if (p && p.fen) {
+            // update moveNumber if provided
+            if (typeof p.moveNumber === "number") moveNumber = p.moveNumber;
+
             game.load(p.fen);
             board.setPosition(game.fen());
-            moveNumber = typeof p.moveNumber === "number" ? p.moveNumber : moveNumber;
             requestEval(game.fen());
           }
           clearLastMoveMarkers();
@@ -874,10 +881,9 @@
 
       // Move input
       board.enableMoveInput((event) => {
-        // spectators: they may have a room but myRole will be null -> can't move
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
-        if (!(myRole === "white" || myRole === "black")) return false;
+        if (!(myRole === "white" || myRole === "black")) return false; // spectators can't move
         if (gameOver) return false;
 
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return canMoveNow();
