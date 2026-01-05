@@ -164,6 +164,22 @@
         outline: none;
       }
 
+      /* ✅ Join row visibility fix */
+      .joinRow { align-items: stretch; }
+      .joinGroup { display: flex; gap: 8px; flex: 1; }
+      .joinGroup input {
+        flex: 1;
+        height: 44px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .joinGroup button {
+        height: 44px;
+        padding: 0 18px;
+        font-weight: 800;
+      }
+
       .kv { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 10px; }
       .kv .k { color: var(--muted); font-size: 12px; }
       .kv .v { font-weight: 800; font-size: 28px; }
@@ -235,11 +251,7 @@
 
       .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
 
-      /* ✅ Chess.com style last-move highlights (Markers extension)
-         We use:
-           - frame marker for FROM square (outline)
-           - square marker for TO square (filled)
-      */
+      /* ✅ Chess.com style last-move highlights (Markers extension) */
       .cm-chessboard .marker.frame {
         stroke: rgba(255, 220, 0, 0.95) !important;
         stroke-width: 7px !important;
@@ -330,10 +342,14 @@
 
             <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
 
-            <div class="row" style="margin-bottom: 8px">
+            <!-- ✅ Updated join row: Join stays visible and inline -->
+            <div class="row joinRow" style="margin-bottom: 8px">
               <button id="createBtn">Create Room</button>
-              <input id="joinInput" type="text" placeholder="ROOM CODE" />
-              <button id="joinBtn">Join</button>
+
+              <div class="joinGroup">
+                <input id="joinInput" type="text" placeholder="ROOM CODE" autocomplete="off" />
+                <button id="joinBtn" class="primary">Join</button>
+              </div>
             </div>
 
             <div style="color: var(--muted); font-size: 12px">
@@ -482,7 +498,6 @@
 
       function playMoveSound() {
         if (!audioCtx) return;
-        // Some browsers need a user gesture before audio plays:
         if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
         const now = audioCtx.currentTime;
 
@@ -528,7 +543,6 @@
       // ---------- Last move highlight ----------
       let lastMove = null; // { from, to }
       function clearLastMoveMarkers() {
-        // We only use these marker types for last-move UI.
         try {
           board.removeMarkers(MARKER_TYPE.frame);
           board.removeMarkers(MARKER_TYPE.square);
@@ -541,12 +555,10 @@
 
         clearLastMoveMarkers();
 
-        // chess.com-like: FROM outline, TO filled
         try {
           board.addMarker(MARKER_TYPE.frame, from);
           board.addMarker(MARKER_TYPE.square, to);
         } catch (e) {
-          // If markers API changes, fail gracefully
           console.warn("marker highlight failed", e);
         }
       }
@@ -760,9 +772,6 @@
           moveNumber = typeof s.moveNumber === "number" ? s.moveNumber : 0;
           requestEval(game.fen());
 
-          // no move info included in state sync, so keep last highlight as-is
-          // (or clear if you want: clearLastMoveMarkers();)
-
           if (typeof s.players === "object") {
             const players = (s.players.w ? 1 : 0) + (s.players.b ? 1 : 0);
             updateTopPills(players);
@@ -775,7 +784,6 @@
       socket.on("move:accepted", ({ fen, moveNumber: mn, move }) => {
         if (!fen) return;
 
-        // play sound + last move highlight (when we have move data)
         if (move && move.from && move.to) {
           playMoveSound();
           showLastMove(move.from, move.to);
@@ -796,8 +804,6 @@
             requestEval(game.fen());
           }
 
-          // If a move got rejected, clear the optimistic highlight.
-          // The next accepted move will re-set it correctly.
           clearLastMoveMarkers();
           lastMove = null;
 
@@ -818,10 +824,6 @@
         }
       });
 
-      // -----------------------------
-      // ✅ Draw + Resign protocol (client side)
-      // -----------------------------
-
       // Incoming draw offer from opponent
       socket.on("draw:offer", (payload = {}) => {
         if (!currentRoom) return;
@@ -830,18 +832,13 @@
 
         sys("draw offer received");
 
-        // Simple UX: confirm dialog. Replace with custom modal later.
         const accept = window.confirm("Opponent offered a draw. Accept?");
         socket.emit("draw:response", { room: currentRoom, accept });
 
-        if (accept) {
-          endGameLocal("draw agreed");
-        } else {
-          sys("draw declined");
-        }
+        if (accept) endGameLocal("draw agreed");
+        else sys("draw declined");
       });
 
-      // Response to our draw offer (if server forwards it)
       socket.on("draw:response", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
@@ -850,14 +847,10 @@
         outgoingDrawPending = false;
         drawBtn.disabled = !(mode === "matched" && !gameOver);
 
-        if (accept) {
-          endGameLocal("draw agreed");
-        } else {
-          sys("draw declined");
-        }
+        if (accept) endGameLocal("draw agreed");
+        else sys("draw declined");
       });
 
-      // If server chooses to broadcast a final draw event instead
       socket.on("draw:accepted", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
@@ -873,11 +866,9 @@
         drawBtn.disabled = !(mode === "matched" && !gameOver);
       });
 
-      // If server broadcasts resign info
       socket.on("game:resigned", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
-
         const by = payload.by ? String(payload.by) : "a player";
         endGameLocal(`${by} resigned`);
       });
@@ -915,7 +906,6 @@
             return false;
           }
 
-          // optimistic UI
           board.setPosition(game.fen());
           requestEval(game.fen());
           playMoveSound();
@@ -970,7 +960,6 @@
         sys("room link copied");
       };
 
-      // ✅ Draw button: offer draw
       drawBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
         if (outgoingDrawPending) return;
@@ -981,7 +970,6 @@
         socket.emit("draw:offer", { room: currentRoom });
       };
 
-      // ✅ Resign button: resign immediately
       resignBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
 
