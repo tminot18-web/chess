@@ -1,4 +1,4 @@
-// Live Eval Chess — Express + Socket.IO + matchmaking queue + auto-vendored Stockfish assets
+// Live Eval Chess — Express + Socket.IO + matchmaking queue + rooms + spectators + vendored Stockfish assets
 
 const path = require("path");
 const fs = require("fs");
@@ -71,7 +71,14 @@ app.use(express.static(path.join(__dirname, "public")));
 
 // ---------- Matchmaking + rooms ----------
 const queue = []; // socket.id[]
-const rooms = new Map(); // roomCode -> { players: {w: socketId|null, b: socketId|null}, game: Chess, moveNumber: number }
+
+// roomCode -> {
+//   players: { w: socketId|null, b: socketId|null },
+//   spectators: Set<socketId>,
+//   game: Chess,
+//   moveNumber: number
+// }
+const rooms = new Map();
 
 function makeRoomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -109,7 +116,8 @@ function cleanupRoom(room) {
   const info = rooms.get(room);
   if (!info) return;
   const { w, b } = info.players;
-  if (!w && !b) rooms.delete(room);
+  const specCount = info.spectators ? info.spectators.size : 0;
+  if (!w && !b && specCount === 0) rooms.delete(room);
 }
 
 function getRoomForSocket(socket) {
@@ -124,19 +132,30 @@ function roleForSocket(room, socketId) {
   if (!info) return null;
   if (info.players.w === socketId) return "w";
   if (info.players.b === socketId) return "b";
-  return null;
+  return null; // spectators have no move role
+}
+
+function countsForRoom(room) {
+  const info = rooms.get(room);
+  if (!info) return { players: 0, spectators: 0 };
+  const players = (info.players.w ? 1 : 0) + (info.players.b ? 1 : 0);
+  const spectators = info.spectators ? info.spectators.size : 0;
+  return { players, spectators };
 }
 
 function emitRoomUpdate(room) {
   const info = rooms.get(room);
   if (!info) return;
-  const players = (info.players.w ? 1 : 0) + (info.players.b ? 1 : 0);
-  io.to(room).emit("room:update", { room, players });
+  const { players, spectators } = countsForRoom(room);
+  io.to(room).emit("room:update", { room, players, spectators });
 }
 
 function roomSnapshot(room) {
   const info = rooms.get(room);
   if (!info) return null;
+
+  const { players, spectators } = countsForRoom(room);
+
   return {
     room,
     fen: info.game.fen(),
@@ -144,7 +163,25 @@ function roomSnapshot(room) {
     moveNumber: info.moveNumber,
     turn: info.game.turn(),
     players: info.players,
+    spectators,
+    playersCount: players,
   };
+}
+
+function ensureRoomStruct(code) {
+  let info = rooms.get(code);
+  if (!info) {
+    info = {
+      players: { w: null, b: null },
+      spectators: new Set(),
+      game: new Chess(),
+      moveNumber: 0,
+    };
+    rooms.set(code, info);
+  } else {
+    if (!info.spectators) info.spectators = new Set();
+  }
+  return info;
 }
 
 function tryMatchmake() {
@@ -156,7 +193,12 @@ function tryMatchmake() {
     if (!sa || !sb) continue;
 
     const room = makeRoomCode();
-    rooms.set(room, { players: { w: a, b: b }, game: new Chess(), moveNumber: 0 });
+    rooms.set(room, {
+      players: { w: a, b: b },
+      spectators: new Set(),
+      game: new Chess(),
+      moveNumber: 0,
+    });
 
     sa.join(room);
     sb.join(room);
@@ -164,6 +206,7 @@ function tryMatchmake() {
     safeEmit(sa, "queue:status", { state: "idle" });
     safeEmit(sb, "queue:status", { state: "idle" });
 
+    // ✅ IMPORTANT: black role is "b" (not "w"/"b" mixed)
     safeEmit(sa, "match:found", { room, role: "w" });
     safeEmit(sb, "match:found", { room, role: "b" });
 
@@ -199,7 +242,13 @@ io.on("connection", (socket) => {
     let room = makeRoomCode();
     while (rooms.has(room)) room = makeRoomCode();
 
-    rooms.set(room, { players: { w: socket.id, b: null }, game: new Chess(), moveNumber: 0 });
+    rooms.set(room, {
+      players: { w: socket.id, b: null },
+      spectators: new Set(),
+      game: new Chess(),
+      moveNumber: 0,
+    });
+
     socket.join(room);
 
     socket.emit("room:created", { room });
@@ -208,7 +257,6 @@ io.on("connection", (socket) => {
     io.to(room).emit("state:sync", roomSnapshot(room));
   });
 
-  // ✅ UPDATED: allow spectators when 2 players already seated
   socket.on("room:join", ({ room }) => {
     const code = String(room || "").trim().toUpperCase();
     if (!code) return;
@@ -216,15 +264,11 @@ io.on("connection", (socket) => {
     removeFromQueue(socket.id);
     leaveAllRooms(socket);
 
-    let info = rooms.get(code);
-    if (!info) {
-      // create room if it doesn't exist (friend links)
-      info = { players: { w: null, b: null }, game: new Chess(), moveNumber: 0 };
-      rooms.set(code, info);
-    }
+    const info = ensureRoomStruct(code);
 
-    // assign seat if available; otherwise spectator
+    // ✅ assign seat if available, otherwise join as spectator
     let role = null;
+
     if (!info.players.w) {
       info.players.w = socket.id;
       role = "w";
@@ -232,24 +276,21 @@ io.on("connection", (socket) => {
       info.players.b = socket.id;
       role = "b";
     } else {
-      // ✅ room full => spectator
-      role = "spectator";
+      // spectator
+      info.spectators.add(socket.id);
+      role = "s";
     }
 
     socket.join(code);
 
-    const players = (info.players.w ? 1 : 0) + (info.players.b ? 1 : 0);
+    const { players, spectators } = countsForRoom(code);
 
-    socket.emit("room:joined", { room: code, role, players });
+    socket.emit("room:joined", { room: code, role, players, spectators });
 
-    if (role === "spectator") {
-      sys(code, "spectator joined");
-    } else {
-      sys(code, `player joined as ${role}`);
-      emitRoomUpdate(code);
-    }
+    if (role === "s") sys(code, "spectator joined");
+    else sys(code, `player joined as ${role}`);
 
-    // Always sync state for anyone who joins (players or spectators)
+    emitRoomUpdate(code);
     io.to(code).emit("state:sync", roomSnapshot(code));
   });
 
@@ -264,12 +305,12 @@ io.on("connection", (socket) => {
   socket.on("move:submit", ({ room, move, clientMoveNumber }) => {
     const code = String(room || "").trim().toUpperCase();
     if (!code) return;
+
     const info = rooms.get(code);
     if (!info) return;
 
     const role = roleForSocket(code, socket.id); // "w" | "b" | null
     if (!role) {
-      // ✅ spectator (or not seated) can't move
       socket.emit("move:rejected", { reason: "not_a_player", ...roomSnapshot(code) });
       return;
     }
@@ -308,11 +349,14 @@ io.on("connection", (socket) => {
   socket.on("chat:send", ({ text }) => {
     const room = getRoomForSocket(socket);
     if (!room) return;
-    const role = roleForSocket(room, socket.id) || "spectator";
+
+    const role = roleForSocket(room, socket.id);
+    const label = role ? role : "s"; // spectators show as "s" in chat
+
     const msg = {
       kind: "user",
       at: new Date().toTimeString().slice(0, 8),
-      from: role,
+      from: label,
       text: String(text || "").slice(0, 500),
     };
     broadcastChat(room, msg);
@@ -322,26 +366,22 @@ io.on("connection", (socket) => {
     removeFromQueue(socket.id);
 
     const room = getRoomForSocket(socket);
-    if (!room) return;
+    if (room) {
+      const info = rooms.get(room);
+      if (info) {
+        // players
+        if (info.players.w === socket.id) info.players.w = null;
+        if (info.players.b === socket.id) info.players.b = null;
 
-    const info = rooms.get(room);
-    if (!info) return;
+        // spectators
+        if (info.spectators) info.spectators.delete(socket.id);
 
-    const role = roleForSocket(room, socket.id);
-
-    // ✅ spectator disconnect: do not emit opponent:left
-    if (!role) {
-      // optionally: sys(room, "spectator left");
-      return;
+        socket.to(room).emit("opponent:left");
+        sys(room, "a user left");
+        emitRoomUpdate(room);
+        cleanupRoom(room);
+      }
     }
-
-    if (info.players.w === socket.id) info.players.w = null;
-    if (info.players.b === socket.id) info.players.b = null;
-
-    socket.to(room).emit("opponent:left");
-    sys(room, "opponent left");
-    emitRoomUpdate(room);
-    cleanupRoom(room);
   });
 });
 

@@ -5,14 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live Eval Chess</title>
 
+    <!-- ✅ Keep cm-chessboard CSS + assets on SAME VERSION as the JS import -->
     <link
       rel="stylesheet"
       href="https://unpkg.com/cm-chessboard@8.7.8/assets/chessboard.css"
     />
+    <!-- ✅ Markers extension CSS (needed for last-move highlight markers) -->
     <link
       rel="stylesheet"
       href="https://unpkg.com/cm-chessboard@8.7.8/assets/extensions/markers/markers.css"
     />
+
     <link rel="icon" href="data:," />
 
     <style>
@@ -28,8 +31,8 @@
         --pad: 14px;
         --rightW: 360px;
 
-        /* ✅ Give Controls more vertical space */
-        --chatFrac: 0.40;
+        /* desktop: chat height = half of right column */
+        --chatFrac: 0.50;
       }
 
       * { box-sizing: border-box; }
@@ -37,7 +40,7 @@
       html, body {
         height: 100%;
         margin: 0;
-        overflow: hidden;
+        overflow: hidden; /* ✅ no page scroll */
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
         background:
           radial-gradient(1200px 700px at 30% 10%, rgba(124, 92, 255, 0.15), transparent 60%),
@@ -87,6 +90,7 @@
       }
       .pill strong { color: var(--text); }
 
+      /* LEFT: board should dominate */
       .left {
         display: grid;
         grid-template-rows: auto 1fr;
@@ -100,6 +104,7 @@
         min-height: 0;
       }
 
+      /* ✅ Make board the biggest thing on screen */
       #board {
         width: min(
           calc(100vw - var(--rightW) - (var(--pad) * 2) - var(--gap) - 28px),
@@ -113,6 +118,7 @@
         overflow: hidden;
       }
 
+      /* RIGHT: controls top-right; chat takes ~half */
       .right {
         display: grid;
         grid-template-rows: calc((1 - var(--chatFrac)) * 100%) calc(var(--chatFrac) * 100%);
@@ -120,19 +126,17 @@
         min-height: 0;
       }
 
-      /* ✅ Controls card: header + flexible body */
+      /* ✅ Controls card should never clip its content; let body scroll if needed */
       .controlsCard {
         display: grid;
         grid-template-rows: auto 1fr;
         min-height: 0;
       }
-
-      /* ✅ Make body a flex column and pin join section to bottom */
       .panelBody {
         padding: 12px 14px;
         min-height: 0;
-        display: flex;
-        flex-direction: column;
+        overflow: auto; /* ✅ if things get tight, it scrolls INSIDE the card */
+        -webkit-overflow-scrolling: touch;
       }
 
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -202,24 +206,6 @@
         background: rgba(124,92,255,0.85);
       }
 
-      /* ✅ Join row always visible & clean */
-      .joinRow { align-items: stretch; }
-      .joinGroup { display: flex; gap: 8px; flex: 1; }
-      .joinGroup input {
-        flex: 1;
-        height: 44px;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        min-width: 0;
-      }
-      .joinGroup button {
-        height: 44px;
-        padding: 0 18px;
-        font-weight: 800;
-        white-space: nowrap;
-      }
-
       .chatCard {
         display: grid;
         grid-template-rows: auto 1fr auto;
@@ -228,9 +214,10 @@
 
       .feed {
         min-height: 0;
-        overflow: auto;
+        overflow: auto; /* ✅ internal scroll only */
         padding: 10px 12px;
         border-top: 1px solid var(--border);
+        -webkit-overflow-scrolling: touch;
       }
 
       .msg {
@@ -260,7 +247,7 @@
 
       .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
 
-      /* last-move markers */
+      /* ✅ Chess.com style last-move highlights */
       .cm-chessboard .marker.frame {
         stroke: rgba(255, 220, 0, 0.95) !important;
         stroke-width: 7px !important;
@@ -274,16 +261,62 @@
         opacity: 1 !important;
       }
 
+      /* ✅ Mobile-only tabs */
+      .mobileTabs { display: none; }
+
       @media (max-width: 1050px) {
         :root { --rightW: 100%; }
+
         .wrap {
           grid-template-columns: 1fr;
-          grid-template-rows: 60vh 40vh;
+          grid-template-rows: auto 1fr;
         }
+
         #board {
-          width: min(calc(100vw - (var(--pad) * 2) - 28px), calc(60vh - 70px));
-          height: min(calc(100vw - (var(--pad) * 2) - 28px), calc(60vh - 70px));
+          width: min(calc(100vw - (var(--pad) * 2) - 28px), 92vw);
+          height: min(calc(100vw - (var(--pad) * 2) - 28px), 92vw);
         }
+
+        .right {
+          display: block;
+          min-height: 0;
+        }
+
+        .mobileTabs {
+          display: flex;
+          gap: 10px;
+          padding: 10px 10px 0 10px;
+        }
+
+        .seg {
+          flex: 1;
+          display: flex;
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          overflow: hidden;
+          background: rgba(255,255,255,0.02);
+        }
+        .seg button {
+          flex: 1;
+          border: none;
+          border-radius: 0;
+          background: transparent;
+          padding: 12px 10px;
+          font-weight: 700;
+          color: rgba(219,227,238,0.75);
+        }
+        .seg button.active {
+          color: var(--text);
+          background: rgba(124,92,255,0.14);
+        }
+
+        .controlsCard { display: none; }
+        .chatCard { display: none; }
+
+        .right.show-controls .controlsCard { display: grid; }
+        .right.show-chat .chatCard { display: grid; }
+
+        .controlsCard, .chatCard { margin-top: 10px; }
       }
     </style>
 
@@ -312,8 +345,15 @@
         </div>
       </div>
 
-      <div class="right">
-        <div class="card controlsCard">
+      <div class="right" id="rightCol">
+        <div class="mobileTabs">
+          <div class="seg" role="tablist" aria-label="Right panel">
+            <button id="tabControls" type="button">Controls</button>
+            <button id="tabChat" type="button">Chat</button>
+          </div>
+        </div>
+
+        <div class="card controlsCard" id="controlsCard">
           <div class="header">
             <div class="title">Controls</div>
             <div class="pillRow">
@@ -325,8 +365,10 @@
             <div class="row">
               <button id="playOnlineBtn" class="primary">Play Online</button>
               <button id="cancelBtn" class="danger" disabled>Cancel</button>
+
               <button id="drawBtn" class="neutral" disabled>Draw</button>
               <button id="resignBtn" class="danger" disabled>Resign</button>
+
               <button id="copyBtn" disabled>Copy Link</button>
             </div>
 
@@ -344,27 +386,21 @@
               You can only move when it’s your turn.
             </div>
 
-            <!-- ✅ pinned footer: always visible -->
-            <div style="margin-top:auto">
-              <hr style="border:none;border-top:1px solid var(--border);margin:10px 0" />
+            <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
 
-              <div class="row joinRow" style="margin-bottom: 8px">
-                <button id="createBtn">Create Room</button>
+            <div class="row" style="margin-bottom: 8px">
+              <button id="createBtn">Create Room</button>
+              <input id="joinInput" type="text" placeholder="ROOM CODE" />
+              <button id="joinBtn">Join</button>
+            </div>
 
-                <div class="joinGroup">
-                  <input id="joinInput" type="text" placeholder="ROOM CODE" autocomplete="off" />
-                  <button id="joinBtn" class="primary">Join</button>
-                </div>
-              </div>
-
-              <div style="color: var(--muted); font-size: 12px">
-                Matchmaking waits for 2 players. Friend rooms use ?room=CODE.
-              </div>
+            <div style="color: var(--muted); font-size: 12px">
+              Matchmaking waits for 2 players. Friend rooms use ?room=CODE.
             </div>
           </div>
         </div>
 
-        <div class="card chatCard">
+        <div class="card chatCard" id="chatCard">
           <div class="header">
             <div class="title">Room Feed</div>
             <div class="pillRow"><div class="pill">log</div></div>
@@ -383,6 +419,29 @@
     <script type="module">
       import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
       import { Markers, MARKER_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/extensions/markers/Markers.js";
+
+      // ---------- Mobile tabs ----------
+      const rightCol = document.getElementById("rightCol");
+      const tabControls = document.getElementById("tabControls");
+      const tabChat = document.getElementById("tabChat");
+
+      function setRightView(view) {
+        rightCol.classList.remove("show-controls", "show-chat");
+        tabControls.classList.remove("active");
+        tabChat.classList.remove("active");
+
+        if (view === "chat") {
+          rightCol.classList.add("show-chat");
+          tabChat.classList.add("active");
+        } else {
+          rightCol.classList.add("show-controls");
+          tabControls.classList.add("active");
+        }
+      }
+
+      tabControls.addEventListener("click", () => setRightView("controls"));
+      tabChat.addEventListener("click", () => setRightView("chat"));
+      setRightView("controls");
 
       // ---------- DOM ----------
       const feedEl = document.getElementById("feed");
@@ -443,14 +502,25 @@
 
       sys("booted");
 
+      // ---------- Role mapping (FIXES spectator pretending to be black) ----------
+      function mapRole(r) {
+        if (r === "w") return "white";
+        if (r === "b") return "black";
+        return "spectator"; // "s" or anything unexpected
+      }
+
       // ---------- State ----------
       let currentRoom = null;
-      let myRole = null; // "white" | "black"
+      let myRole = null; // "white" | "black" | "spectator"
       let mode = "idle"; // idle | searching | matched
       let moveNumber = 0;
       let gameOver = false;
 
       let outgoingDrawPending = false;
+
+      function isPlayer() {
+        return myRole === "white" || myRole === "black";
+      }
 
       function setMode(next) {
         mode = next;
@@ -462,8 +532,9 @@
         playOnlineBtn.disabled = searching;
         cancelBtn.disabled = !searching;
 
-        drawBtn.disabled = !(matched && !gameOver);
-        resignBtn.disabled = !(matched && !gameOver);
+        // only players can offer draw/resign
+        drawBtn.disabled = !(matched && !gameOver && isPlayer());
+        resignBtn.disabled = !(matched && !gameOver && isPlayer());
 
         copyBtn.disabled = !currentRoom;
       }
@@ -545,7 +616,6 @@
       }
 
       // ---------- Last move highlight ----------
-      let lastMove = null;
       function clearLastMoveMarkers() {
         try {
           board.removeMarkers(MARKER_TYPE.frame);
@@ -555,7 +625,6 @@
 
       function showLastMove(from, to) {
         if (!from || !to) return;
-        lastMove = { from, to };
         clearLastMoveMarkers();
         try {
           board.addMarker(MARKER_TYPE.frame, from);
@@ -574,6 +643,7 @@
 
       function setEvalFromCp(cp, label = null) {
         evalNumEl.textContent = label ? label : fmtEval(cp);
+
         const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
         const c = clamp(cp, -600, 600);
         const pct = clamp(50 + c / 12, 0, 100);
@@ -589,13 +659,13 @@
         board.setPosition(game.fen());
         setEvalFromCp(0);
         clearLastMoveMarkers();
-        lastMove = null;
         requestEval(game.fen());
         setMode(mode);
       }
 
       function canMoveNow() {
         if (gameOver) return false;
+        if (!isPlayer()) return false; // ✅ spectators can't move
         const turn = game.turn();
         if (myRole === "white") return turn === "w";
         if (myRole === "black") return turn === "b";
@@ -651,9 +721,10 @@
           }
         };
 
-        sf.onerror = () => {
+        sf.onerror = (e) => {
           engineStatusEl.textContent = "error";
           err("Stockfish worker error (see console).");
+          console.error("stockfish worker error", e);
         };
 
         sf.postMessage("uci");
@@ -682,7 +753,10 @@
 
       socket.on("connect", () => sys("socket connected"));
       socket.on("disconnect", () => sys("socket disconnected"));
-      socket.on("connect_error", (e) => err("socket connect_error: " + (e?.message || e)));
+      socket.on("connect_error", (e) => {
+        err("socket connect_error: " + (e?.message || e));
+        console.error("connect_error", e);
+      });
 
       socket.on("queue:status", ({ state }) => {
         if (state === "searching") {
@@ -697,7 +771,7 @@
 
       socket.on("match:found", ({ room, role }) => {
         currentRoom = room;
-        myRole = role === "w" ? "white" : "black";
+        myRole = mapRole(role);
         gameOver = false;
         outgoingDrawPending = false;
 
@@ -735,13 +809,17 @@
 
       socket.on("room:joined", ({ room, role, players }) => {
         currentRoom = room;
-        myRole = role === "w" ? "white" : "black";
+        myRole = mapRole(role);
         gameOver = false;
         outgoingDrawPending = false;
 
         setMode("matched");
         updateTopPills(players ?? null);
-        setOrientation();
+
+        // Spectators should NOT flip orientation (keep white view)
+        if (isPlayer()) setOrientation();
+        else board.setOrientation(COLOR.white);
+
         resetLocalGame();
         socket.emit("state:request", { room: currentRoom });
 
@@ -757,7 +835,9 @@
       });
 
       socket.on("room:error", ({ error }) => sys("room error: " + error));
-      socket.on("opponent:left", () => sys("opponent left"));
+      socket.on("opponent:left", () => {
+        sys("opponent left");
+      });
 
       socket.on("state:sync", (s) => {
         try {
@@ -799,7 +879,6 @@
             requestEval(game.fen());
           }
           clearLastMoveMarkers();
-          lastMove = null;
           if (p && p.reason) sys("move rejected: " + p.reason);
         } catch (e) {
           console.error("move:rejected error", e);
@@ -817,10 +896,14 @@
         }
       });
 
+      // -----------------------------
+      // Draw + Resign (client side)
+      // -----------------------------
       socket.on("draw:offer", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
         if (gameOver) return;
+        if (!isPlayer()) return; // ✅ spectators ignore draw offers
 
         sys("draw offer received");
         const accept = window.confirm("Opponent offered a draw. Accept?");
@@ -836,7 +919,7 @@
 
         const accept = !!payload.accept;
         outgoingDrawPending = false;
-        drawBtn.disabled = !(mode === "matched" && !gameOver);
+        drawBtn.disabled = !(mode === "matched" && !gameOver && isPlayer());
 
         if (accept) endGameLocal("draw agreed");
         else sys("draw declined");
@@ -854,7 +937,7 @@
         if (payload.room && payload.room !== currentRoom) return;
         outgoingDrawPending = false;
         sys("draw declined");
-        drawBtn.disabled = !(mode === "matched" && !gameOver);
+        drawBtn.disabled = !(mode === "matched" && !gameOver && isPlayer());
       });
 
       socket.on("game:resigned", (payload = {}) => {
@@ -871,10 +954,11 @@
         endGameLocal(reason);
       });
 
+      // Move input
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
-        if (!(myRole === "white" || myRole === "black")) return false;
+        if (!isPlayer()) return false; // ✅ spectators cannot drag pieces
         if (gameOver) return false;
 
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return canMoveNow();
@@ -913,6 +997,7 @@
         return true;
       });
 
+      // Controls
       playOnlineBtn.onclick = () => {
         sys("Play Online");
         clearSession();
@@ -941,10 +1026,6 @@
         socket.emit("room:join", { room: code });
       };
 
-      joinInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") joinBtn.click();
-      });
-
       copyBtn.onclick = async () => {
         const u = new URL(location.href);
         if (currentRoom) u.searchParams.set("room", currentRoom);
@@ -955,6 +1036,7 @@
 
       drawBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
+        if (!isPlayer()) return;
         if (outgoingDrawPending) return;
 
         outgoingDrawPending = true;
@@ -965,6 +1047,8 @@
 
       resignBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
+        if (!isPlayer()) return;
+
         const ok = window.confirm("Resign this game?");
         if (!ok) return;
 
@@ -981,13 +1065,19 @@
       sendBtn.onclick = sendChat;
       chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
 
+      // auto-join
       const roomParam = new URL(location.href).searchParams.get("room");
       if (roomParam) {
         const code = roomParam.trim().toUpperCase();
         sys("auto-join: " + code);
         socket.emit("room:join", { room: code });
+
+        if (window.matchMedia && window.matchMedia("(max-width: 1050px)").matches) {
+          setRightView("chat");
+        }
       }
 
+      // init
       setMode("idle");
       updateTopPills(0);
       resetLocalGame();
