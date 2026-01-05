@@ -30,6 +30,9 @@
         --gap: 14px;
         --pad: 14px;
         --rightW: 360px;
+
+        /* chat height = half of right column */
+        --chatFrac: 0.50;
       }
 
       * { box-sizing: border-box; }
@@ -72,7 +75,6 @@
         justify-content: space-between;
         align-items: center;
         gap: 10px;
-        flex: 0 0 auto;
       }
 
       .title { font-size: 16px; font-weight: 800; letter-spacing: 0.3px; }
@@ -116,27 +118,15 @@
         overflow: hidden;
       }
 
-      /* ✅ RIGHT COLUMN:
-         Controls auto-height (never clips), Chat fills remainder.
-      */
+      /* RIGHT: controls top-right; chat takes ~half */
       .right {
         display: grid;
-        grid-template-rows: auto 1fr;
+        grid-template-rows: calc((1 - var(--chatFrac)) * 100%) calc(var(--chatFrac) * 100%);
         gap: var(--gap);
         min-height: 0;
       }
 
-      .controlsCard {
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-      }
-
-      .panelBody {
-        padding: 12px 14px;
-        min-height: 0;
-        overflow: auto; /* ✅ small screens: scroll instead of clip */
-      }
+      .panelBody { padding: 12px 14px; }
 
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
@@ -148,7 +138,6 @@
         padding: 10px 12px;
         border-radius: 12px;
         cursor: pointer;
-        white-space: nowrap;
       }
       button.primary {
         border-color: rgba(124,92,255,0.45);
@@ -166,7 +155,7 @@
 
       input[type="text"] {
         flex: 1;
-        min-width: 0; /* ✅ allow shrink; prevents overflow/cutoff */
+        min-width: 160px;
         padding: 10px 12px;
         border-radius: 12px;
         border: 1px solid var(--border);
@@ -246,18 +235,11 @@
 
       .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
 
-      /* ✅ Join row: never clips/cuts off */
-      .joinRow {
-        display: grid;
-        grid-template-columns: auto 1fr auto;
-        gap: 8px;
-        align-items: center;
-        width: 100%;
-        min-width: 0;
-      }
-      .joinRow > * { min-width: 0; }
-
-      /* ✅ Chess.com style last-move highlights */
+      /* ✅ Chess.com style last-move highlights (Markers extension)
+         We use:
+           - frame marker for FROM square (outline)
+           - square marker for TO square (filled)
+      */
       .cm-chessboard .marker.frame {
         stroke: rgba(255, 220, 0, 0.95) !important;
         stroke-width: 7px !important;
@@ -312,7 +294,7 @@
       </div>
 
       <div class="right">
-        <div class="card controlsCard">
+        <div class="card">
           <div class="header">
             <div class="title">Controls</div>
             <div class="pillRow">
@@ -341,11 +323,13 @@
               <div class="evalMarker"></div>
             </div>
 
-            <div class="modeLine">You can only move when it’s your turn.</div>
+            <div class="modeLine">
+              You can only move when it’s your turn.
+            </div>
 
             <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
 
-            <div class="joinRow" style="margin-bottom: 8px">
+            <div class="row" style="margin-bottom: 8px">
               <button id="createBtn">Create Room</button>
               <input id="joinInput" type="text" placeholder="ROOM CODE" />
               <button id="joinBtn">Join</button>
@@ -443,6 +427,7 @@
       let moveNumber = 0;
       let gameOver = false;
 
+      // draw offer tracking
       let outgoingDrawPending = false;
 
       function setMode(next) {
@@ -455,8 +440,10 @@
         playOnlineBtn.disabled = searching;
         cancelBtn.disabled = !searching;
 
-        drawBtn.disabled = !(matched && !gameOver);
-        resignBtn.disabled = !(matched && !gameOver);
+        // enable/disable draw+resign only when seated as a player and game not over
+        const isPlayer = myRole === "white" || myRole === "black";
+        drawBtn.disabled = !(matched && !gameOver && isPlayer);
+        resignBtn.disabled = !(matched && !gameOver && isPlayer);
 
         copyBtn.disabled = !currentRoom;
       }
@@ -486,10 +473,10 @@
         if (gameOver) return;
         gameOver = true;
         sys(reason);
-        setMode(mode);
+        setMode(mode); // refresh button states
       }
 
-      // ---------- Move sound ----------
+      // ---------- Move sound (chess.com vibe) ----------
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const audioCtx = AudioCtx ? new AudioCtx() : null;
 
@@ -533,9 +520,12 @@
         board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
       }
 
-      // ✅ FIX: after game.load(fen), chess.js history() is empty. Use moveNumber instead.
+      // ✅ IMPORTANT CHANGE:
+      // Always allow eval once there is at least one move in history.
+      // (Do NOT use moveNumber, because some clients can be "behind" moveNumber until they play,
+      // but they still have the correct FEN.)
       function shouldShowEval() {
-        return moveNumber > 0;
+        return game.history().length > 0;
       }
 
       // ---------- Last move highlight ----------
@@ -566,6 +556,7 @@
 
       function setEvalFromCp(cp, label = null) {
         evalNumEl.textContent = label ? label : fmtEval(cp);
+
         const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
         const c = clamp(cp, -600, 600);
         const pct = clamp(50 + c / 12, 0, 100);
@@ -625,7 +616,8 @@
           if (!accepting) return;
           if (!line.startsWith("info") || !line.includes("score")) return;
 
-          // ✅ FIX: gate on moveNumber so BOTH players update eval
+          // ✅ IMPORTANT CHANGE:
+          // Only hide eval before the first move, based on game history (not moveNumber / role / turn).
           if (!shouldShowEval()) return;
 
           const mMate = line.match(/score mate (-?\d+)/);
@@ -730,19 +722,17 @@
         sys(`room created: ${room}`);
       });
 
+      // Server may send role "w"/"b" for seated players, or "s" / null / undefined for spectators.
       socket.on("room:joined", ({ room, role, players }) => {
         currentRoom = room;
-
-        // role can be null/undefined for spectators depending on server
-        if (role === "w") myRole = "white";
-        else if (role === "b") myRole = "black";
-        else myRole = null;
-
+        myRole = role === "w" ? "white" : role === "b" ? "black" : null;
         gameOver = false;
         outgoingDrawPending = false;
 
         setMode("matched");
         updateTopPills(players ?? null);
+
+        // spectators view from white by default
         setOrientation();
         resetLocalGame();
         socket.emit("state:request", { room: currentRoom });
@@ -759,17 +749,19 @@
       });
 
       socket.on("room:error", ({ error }) => sys("room error: " + error));
-      socket.on("opponent:left", () => sys("opponent left"));
+      socket.on("opponent:left", () => {
+        sys("opponent left");
+      });
 
       socket.on("state:sync", (s) => {
         try {
           if (!s || !s.fen) return;
 
-          // IMPORTANT: update moveNumber BEFORE requestEval so shouldShowEval() works on both clients
-          moveNumber = typeof s.moveNumber === "number" ? s.moveNumber : moveNumber;
-
+          // ✅ Load fen first, then eval it (for everyone)
           game.load(s.fen);
           board.setPosition(game.fen());
+          moveNumber = typeof s.moveNumber === "number" ? s.moveNumber : moveNumber;
+
           requestEval(game.fen());
 
           if (typeof s.players === "object") {
@@ -784,30 +776,32 @@
       socket.on("move:accepted", ({ fen, moveNumber: mn, move }) => {
         if (!fen) return;
 
-        // update moveNumber first so eval gating is consistent
-        if (typeof mn === "number") moveNumber = mn;
-
+        // highlight + sound
         if (move && move.from && move.to) {
           playMoveSound();
           showLastMove(move.from, move.to);
         }
 
+        // ✅ Load fen first, then eval it (for everyone)
         game.load(fen);
         board.setPosition(game.fen());
+        if (typeof mn === "number") moveNumber = mn;
+
         requestEval(game.fen());
       });
 
       socket.on("move:rejected", (p) => {
         try {
           if (p && p.fen) {
-            // update moveNumber if provided
-            if (typeof p.moveNumber === "number") moveNumber = p.moveNumber;
-
             game.load(p.fen);
             board.setPosition(game.fen());
+            moveNumber = typeof p.moveNumber === "number" ? p.moveNumber : moveNumber;
+
             requestEval(game.fen());
           }
+
           clearLastMoveMarkers();
+
           if (p && p.reason) sys("move rejected: " + p.reason);
         } catch (e) {
           console.error("move:rejected error", e);
@@ -825,11 +819,17 @@
         }
       });
 
-      // Draw offer
+      // -----------------------------
+      // ✅ Draw + Resign protocol (client side)
+      // -----------------------------
+
       socket.on("draw:offer", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
         if (gameOver) return;
+
+        // only seated players can respond
+        if (!(myRole === "white" || myRole === "black")) return;
 
         sys("draw offer received");
         const accept = window.confirm("Opponent offered a draw. Accept?");
@@ -843,10 +843,11 @@
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
 
+        const accept = !!payload.accept;
         outgoingDrawPending = false;
-        drawBtn.disabled = !(mode === "matched" && !gameOver);
+        setMode(mode);
 
-        if (payload.accept) endGameLocal("draw agreed");
+        if (accept) endGameLocal("draw agreed");
         else sys("draw declined");
       });
 
@@ -862,7 +863,7 @@
         if (payload.room && payload.room !== currentRoom) return;
         outgoingDrawPending = false;
         sys("draw declined");
-        drawBtn.disabled = !(mode === "matched" && !gameOver);
+        setMode(mode);
       });
 
       socket.on("game:resigned", (payload = {}) => {
@@ -879,7 +880,7 @@
         endGameLocal(reason);
       });
 
-      // Move input
+      // Move input (only seated players)
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
@@ -905,6 +906,7 @@
             return false;
           }
 
+          // optimistic UI
           board.setPosition(game.fen());
           requestEval(game.fen());
           playMoveSound();
@@ -918,6 +920,7 @@
 
           return true;
         }
+
         return true;
       });
 
@@ -960,18 +963,22 @@
 
       drawBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
+        if (!(myRole === "white" || myRole === "black")) return;
         if (outgoingDrawPending) return;
 
         outgoingDrawPending = true;
-        drawBtn.disabled = true;
+        setMode(mode);
         sys("draw offer sent");
         socket.emit("draw:offer", { room: currentRoom });
       };
 
       resignBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
+        if (!(myRole === "white" || myRole === "black")) return;
+
         const ok = window.confirm("Resign this game?");
         if (!ok) return;
+
         socket.emit("game:resign", { room: currentRoom });
         endGameLocal("you resigned");
       };
