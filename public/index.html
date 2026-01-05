@@ -30,9 +30,6 @@
         --gap: 14px;
         --pad: 14px;
         --rightW: 360px;
-
-        /* desktop: chat height = half of right column */
-        --chatFrac: 0.50;
       }
 
       * { box-sizing: border-box; }
@@ -75,6 +72,7 @@
         justify-content: space-between;
         align-items: center;
         gap: 10px;
+        flex: 0 0 auto;
       }
 
       .title { font-size: 16px; font-weight: 800; letter-spacing: 0.3px; }
@@ -118,25 +116,28 @@
         overflow: hidden;
       }
 
-      /* RIGHT: controls top-right; chat takes ~half */
+      /* ✅ RIGHT COLUMN FIX:
+         Use auto for Controls (so it never clips its contents),
+         and let Chat take the remaining space.
+      */
       .right {
         display: grid;
-        grid-template-rows: calc((1 - var(--chatFrac)) * 100%) calc(var(--chatFrac) * 100%);
+        grid-template-rows: auto 1fr; /* ✅ was % split; that caused clipping */
         gap: var(--gap);
         min-height: 0;
       }
 
-      /* ✅ Controls card should never clip its content; let body scroll if needed */
+      /* Controls card becomes a column so body can scroll if needed */
       .controlsCard {
-        display: grid;
-        grid-template-rows: auto 1fr;
+        display: flex;
+        flex-direction: column;
         min-height: 0;
       }
+
       .panelBody {
         padding: 12px 14px;
         min-height: 0;
-        overflow: auto; /* ✅ if things get tight, it scrolls INSIDE the card */
-        -webkit-overflow-scrolling: touch;
+        overflow: auto; /* ✅ if a small screen, body scrolls instead of clipping */
       }
 
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -149,6 +150,7 @@
         padding: 10px 12px;
         border-radius: 12px;
         cursor: pointer;
+        white-space: nowrap;
       }
       button.primary {
         border-color: rgba(124,92,255,0.45);
@@ -166,7 +168,7 @@
 
       input[type="text"] {
         flex: 1;
-        min-width: 160px;
+        min-width: 0; /* ✅ IMPORTANT: allows input to shrink without overflowing/cutting off buttons */
         padding: 10px 12px;
         border-radius: 12px;
         border: 1px solid var(--border);
@@ -217,7 +219,6 @@
         overflow: auto; /* ✅ internal scroll only */
         padding: 10px 12px;
         border-top: 1px solid var(--border);
-        -webkit-overflow-scrolling: touch;
       }
 
       .msg {
@@ -247,7 +248,21 @@
 
       .chatRow { display: flex; gap: 8px; padding: 12px 12px 14px 12px; }
 
-      /* ✅ Chess.com style last-move highlights */
+      /* ✅ Join row: force a clean 3-column layout so JOIN never gets cut off */
+      .joinRow {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 8px;
+        align-items: center;
+        width: 100%;
+        min-width: 0;
+      }
+      .joinRow > * { min-width: 0; }
+
+      /* ✅ Chess.com style last-move highlights (Markers extension)
+         FROM: frame (outline)
+         TO: square (filled)
+      */
       .cm-chessboard .marker.frame {
         stroke: rgba(255, 220, 0, 0.95) !important;
         stroke-width: 7px !important;
@@ -261,66 +276,24 @@
         opacity: 1 !important;
       }
 
-      /* ✅ Mobile-only tabs */
-      .mobileTabs { display: none; }
-
+      /* Mobile: keep it usable without breaking desktop.
+         Stack columns, but still avoid clipping. */
       @media (max-width: 1050px) {
         :root { --rightW: 100%; }
-
         .wrap {
           grid-template-columns: 1fr;
-          grid-template-rows: auto 1fr;
+          grid-template-rows: 60vh 40vh;
         }
-
         #board {
-          width: min(calc(100vw - (var(--pad) * 2) - 28px), 92vw);
-          height: min(calc(100vw - (var(--pad) * 2) - 28px), 92vw);
+          width: min(calc(100vw - (var(--pad) * 2) - 28px), calc(60vh - 70px));
+          height: min(calc(100vw - (var(--pad) * 2) - 28px), calc(60vh - 70px));
         }
-
-        .right {
-          display: block;
-          min-height: 0;
-        }
-
-        .mobileTabs {
-          display: flex;
-          gap: 10px;
-          padding: 10px 10px 0 10px;
-        }
-
-        .seg {
-          flex: 1;
-          display: flex;
-          border: 1px solid var(--border);
-          border-radius: 14px;
-          overflow: hidden;
-          background: rgba(255,255,255,0.02);
-        }
-        .seg button {
-          flex: 1;
-          border: none;
-          border-radius: 0;
-          background: transparent;
-          padding: 12px 10px;
-          font-weight: 700;
-          color: rgba(219,227,238,0.75);
-        }
-        .seg button.active {
-          color: var(--text);
-          background: rgba(124,92,255,0.14);
-        }
-
-        .controlsCard { display: none; }
-        .chatCard { display: none; }
-
-        .right.show-controls .controlsCard { display: grid; }
-        .right.show-chat .chatCard { display: grid; }
-
-        .controlsCard, .chatCard { margin-top: 10px; }
       }
     </style>
 
     <script src="/socket.io/socket.io.js"></script>
+
+    <!-- ✅ Use the UMD that defines window.Chess -->
     <script src="https://cdn.jsdelivr.net/npm/chess.js@0.10.3/chess.min.js"></script>
   </head>
 
@@ -345,15 +318,8 @@
         </div>
       </div>
 
-      <div class="right" id="rightCol">
-        <div class="mobileTabs">
-          <div class="seg" role="tablist" aria-label="Right panel">
-            <button id="tabControls" type="button">Controls</button>
-            <button id="tabChat" type="button">Chat</button>
-          </div>
-        </div>
-
-        <div class="card controlsCard" id="controlsCard">
+      <div class="right">
+        <div class="card controlsCard">
           <div class="header">
             <div class="title">Controls</div>
             <div class="pillRow">
@@ -382,13 +348,12 @@
               <div class="evalMarker"></div>
             </div>
 
-            <div class="modeLine">
-              You can only move when it’s your turn.
-            </div>
+            <div class="modeLine">You can only move when it’s your turn.</div>
 
             <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
 
-            <div class="row" style="margin-bottom: 8px">
+            <!-- ✅ This row will not clip/cut off anymore -->
+            <div class="joinRow" style="margin-bottom: 8px">
               <button id="createBtn">Create Room</button>
               <input id="joinInput" type="text" placeholder="ROOM CODE" />
               <button id="joinBtn">Join</button>
@@ -400,7 +365,7 @@
           </div>
         </div>
 
-        <div class="card chatCard" id="chatCard">
+        <div class="card chatCard">
           <div class="header">
             <div class="title">Room Feed</div>
             <div class="pillRow"><div class="pill">log</div></div>
@@ -419,29 +384,6 @@
     <script type="module">
       import { COLOR, Chessboard, FEN, INPUT_EVENT_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/Chessboard.js";
       import { Markers, MARKER_TYPE } from "https://unpkg.com/cm-chessboard@8.7.8/src/extensions/markers/Markers.js";
-
-      // ---------- Mobile tabs ----------
-      const rightCol = document.getElementById("rightCol");
-      const tabControls = document.getElementById("tabControls");
-      const tabChat = document.getElementById("tabChat");
-
-      function setRightView(view) {
-        rightCol.classList.remove("show-controls", "show-chat");
-        tabControls.classList.remove("active");
-        tabChat.classList.remove("active");
-
-        if (view === "chat") {
-          rightCol.classList.add("show-chat");
-          tabChat.classList.add("active");
-        } else {
-          rightCol.classList.add("show-controls");
-          tabControls.classList.add("active");
-        }
-      }
-
-      tabControls.addEventListener("click", () => setRightView("controls"));
-      tabChat.addEventListener("click", () => setRightView("chat"));
-      setRightView("controls");
 
       // ---------- DOM ----------
       const feedEl = document.getElementById("feed");
@@ -502,25 +444,14 @@
 
       sys("booted");
 
-      // ---------- Role mapping (FIXES spectator pretending to be black) ----------
-      function mapRole(r) {
-        if (r === "w") return "white";
-        if (r === "b") return "black";
-        return "spectator"; // "s" or anything unexpected
-      }
-
       // ---------- State ----------
       let currentRoom = null;
-      let myRole = null; // "white" | "black" | "spectator"
+      let myRole = null; // "white" | "black"
       let mode = "idle"; // idle | searching | matched
       let moveNumber = 0;
       let gameOver = false;
 
       let outgoingDrawPending = false;
-
-      function isPlayer() {
-        return myRole === "white" || myRole === "black";
-      }
 
       function setMode(next) {
         mode = next;
@@ -532,9 +463,8 @@
         playOnlineBtn.disabled = searching;
         cancelBtn.disabled = !searching;
 
-        // only players can offer draw/resign
-        drawBtn.disabled = !(matched && !gameOver && isPlayer());
-        resignBtn.disabled = !(matched && !gameOver && isPlayer());
+        drawBtn.disabled = !(matched && !gameOver);
+        resignBtn.disabled = !(matched && !gameOver);
 
         copyBtn.disabled = !currentRoom;
       }
@@ -643,7 +573,6 @@
 
       function setEvalFromCp(cp, label = null) {
         evalNumEl.textContent = label ? label : fmtEval(cp);
-
         const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
         const c = clamp(cp, -600, 600);
         const pct = clamp(50 + c / 12, 0, 100);
@@ -665,7 +594,6 @@
 
       function canMoveNow() {
         if (gameOver) return false;
-        if (!isPlayer()) return false; // ✅ spectators can't move
         const turn = game.turn();
         if (myRole === "white") return turn === "w";
         if (myRole === "black") return turn === "b";
@@ -771,7 +699,7 @@
 
       socket.on("match:found", ({ room, role }) => {
         currentRoom = room;
-        myRole = mapRole(role);
+        myRole = role === "w" ? "white" : "black";
         gameOver = false;
         outgoingDrawPending = false;
 
@@ -809,17 +737,13 @@
 
       socket.on("room:joined", ({ room, role, players }) => {
         currentRoom = room;
-        myRole = mapRole(role);
+        myRole = role === "w" ? "white" : "black";
         gameOver = false;
         outgoingDrawPending = false;
 
         setMode("matched");
         updateTopPills(players ?? null);
-
-        // Spectators should NOT flip orientation (keep white view)
-        if (isPlayer()) setOrientation();
-        else board.setOrientation(COLOR.white);
-
+        setOrientation();
         resetLocalGame();
         socket.emit("state:request", { room: currentRoom });
 
@@ -835,9 +759,7 @@
       });
 
       socket.on("room:error", ({ error }) => sys("room error: " + error));
-      socket.on("opponent:left", () => {
-        sys("opponent left");
-      });
+      socket.on("opponent:left", () => sys("opponent left"));
 
       socket.on("state:sync", (s) => {
         try {
@@ -896,14 +818,11 @@
         }
       });
 
-      // -----------------------------
-      // Draw + Resign (client side)
-      // -----------------------------
+      // Draw offer
       socket.on("draw:offer", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
         if (gameOver) return;
-        if (!isPlayer()) return; // ✅ spectators ignore draw offers
 
         sys("draw offer received");
         const accept = window.confirm("Opponent offered a draw. Accept?");
@@ -917,11 +836,10 @@
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
 
-        const accept = !!payload.accept;
         outgoingDrawPending = false;
-        drawBtn.disabled = !(mode === "matched" && !gameOver && isPlayer());
+        drawBtn.disabled = !(mode === "matched" && !gameOver);
 
-        if (accept) endGameLocal("draw agreed");
+        if (payload.accept) endGameLocal("draw agreed");
         else sys("draw declined");
       });
 
@@ -937,7 +855,7 @@
         if (payload.room && payload.room !== currentRoom) return;
         outgoingDrawPending = false;
         sys("draw declined");
-        drawBtn.disabled = !(mode === "matched" && !gameOver && isPlayer());
+        drawBtn.disabled = !(mode === "matched" && !gameOver);
       });
 
       socket.on("game:resigned", (payload = {}) => {
@@ -956,9 +874,10 @@
 
       // Move input
       board.enableMoveInput((event) => {
+        // spectators: they may have a room but myRole will be null -> can't move
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
-        if (!isPlayer()) return false; // ✅ spectators cannot drag pieces
+        if (!(myRole === "white" || myRole === "black")) return false;
         if (gameOver) return false;
 
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return canMoveNow();
@@ -993,7 +912,6 @@
 
           return true;
         }
-
         return true;
       });
 
@@ -1036,7 +954,6 @@
 
       drawBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
-        if (!isPlayer()) return;
         if (outgoingDrawPending) return;
 
         outgoingDrawPending = true;
@@ -1047,11 +964,8 @@
 
       resignBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
-        if (!isPlayer()) return;
-
         const ok = window.confirm("Resign this game?");
         if (!ok) return;
-
         socket.emit("game:resign", { room: currentRoom });
         endGameLocal("you resigned");
       };
@@ -1071,10 +985,6 @@
         const code = roomParam.trim().toUpperCase();
         sys("auto-join: " + code);
         socket.emit("room:join", { room: code });
-
-        if (window.matchMedia && window.matchMedia("(max-width: 1050px)").matches) {
-          setRightView("chat");
-        }
       }
 
       // init
