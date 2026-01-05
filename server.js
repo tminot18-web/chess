@@ -1,4 +1,3 @@
-// server.js
 // Live Eval Chess — Express + Socket.IO + matchmaking queue + auto-vendored Stockfish assets
 
 const path = require("path");
@@ -176,7 +175,6 @@ function tryMatchmake() {
 
 // ---------- Socket.IO ----------
 io.on("connection", (socket) => {
-  // Let client show "connected" etc.
   socket.emit("chat", { kind: "sys", at: new Date().toTimeString().slice(0, 8), text: "connected" });
 
   socket.on("queue:join", () => {
@@ -210,6 +208,7 @@ io.on("connection", (socket) => {
     io.to(room).emit("state:sync", roomSnapshot(room));
   });
 
+  // ✅ UPDATED: allow spectators when 2 players already seated
   socket.on("room:join", ({ room }) => {
     const code = String(room || "").trim().toUpperCase();
     if (!code) return;
@@ -224,7 +223,7 @@ io.on("connection", (socket) => {
       rooms.set(code, info);
     }
 
-    // assign seat
+    // assign seat if available; otherwise spectator
     let role = null;
     if (!info.players.w) {
       info.players.w = socket.id;
@@ -233,9 +232,8 @@ io.on("connection", (socket) => {
       info.players.b = socket.id;
       role = "b";
     } else {
-      // room full
-      socket.emit("room:error", { error: "room full" });
-      return;
+      // ✅ room full => spectator
+      role = "spectator";
     }
 
     socket.join(code);
@@ -243,8 +241,15 @@ io.on("connection", (socket) => {
     const players = (info.players.w ? 1 : 0) + (info.players.b ? 1 : 0);
 
     socket.emit("room:joined", { room: code, role, players });
-    sys(code, `player joined as ${role}`);
-    emitRoomUpdate(code);
+
+    if (role === "spectator") {
+      sys(code, "spectator joined");
+    } else {
+      sys(code, `player joined as ${role}`);
+      emitRoomUpdate(code);
+    }
+
+    // Always sync state for anyone who joins (players or spectators)
     io.to(code).emit("state:sync", roomSnapshot(code));
   });
 
@@ -264,7 +269,8 @@ io.on("connection", (socket) => {
 
     const role = roleForSocket(code, socket.id); // "w" | "b" | null
     if (!role) {
-      socket.emit("move:rejected", { reason: "not_in_room", ...roomSnapshot(code) });
+      // ✅ spectator (or not seated) can't move
+      socket.emit("move:rejected", { reason: "not_a_player", ...roomSnapshot(code) });
       return;
     }
 
@@ -302,7 +308,7 @@ io.on("connection", (socket) => {
   socket.on("chat:send", ({ text }) => {
     const room = getRoomForSocket(socket);
     if (!room) return;
-    const role = roleForSocket(room, socket.id) || "?";
+    const role = roleForSocket(room, socket.id) || "spectator";
     const msg = {
       kind: "user",
       at: new Date().toTimeString().slice(0, 8),
@@ -316,17 +322,26 @@ io.on("connection", (socket) => {
     removeFromQueue(socket.id);
 
     const room = getRoomForSocket(socket);
-    if (room) {
-      const info = rooms.get(room);
-      if (info) {
-        if (info.players.w === socket.id) info.players.w = null;
-        if (info.players.b === socket.id) info.players.b = null;
-        socket.to(room).emit("opponent:left");
-        sys(room, "opponent left");
-        emitRoomUpdate(room);
-        cleanupRoom(room);
-      }
+    if (!room) return;
+
+    const info = rooms.get(room);
+    if (!info) return;
+
+    const role = roleForSocket(room, socket.id);
+
+    // ✅ spectator disconnect: do not emit opponent:left
+    if (!role) {
+      // optionally: sys(room, "spectator left");
+      return;
     }
+
+    if (info.players.w === socket.id) info.players.w = null;
+    if (info.players.b === socket.id) info.players.b = null;
+
+    socket.to(room).emit("opponent:left");
+    sys(room, "opponent left");
+    emitRoomUpdate(room);
+    cleanupRoom(room);
   });
 });
 

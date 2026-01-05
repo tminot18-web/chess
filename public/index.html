@@ -313,7 +313,7 @@
             </div>
 
             <div style="color: var(--muted); font-size: 12px">
-              Matchmaking waits for 2 players. Friend rooms use ?room=CODE.
+              Matchmaking waits for 2 players. Friend rooms use ?room=CODE. Spectators can join anytime.
             </div>
           </div>
         </div>
@@ -398,13 +398,17 @@
 
       // ---------- State ----------
       let currentRoom = null;
-      let myRole = null; // "white" | "black"
+      let myRole = null; // "white" | "black" | "spectator" | null
       let mode = "idle"; // idle | searching | matched
       let moveNumber = 0;
       let gameOver = false;
 
       // draw offer tracking
       let outgoingDrawPending = false;
+
+      function isPlayerRole() {
+        return myRole === "white" || myRole === "black";
+      }
 
       function setMode(next) {
         mode = next;
@@ -416,9 +420,9 @@
         playOnlineBtn.disabled = searching;
         cancelBtn.disabled = !searching;
 
-        // enable/disable draw+resign only when in a matched game and not over
-        drawBtn.disabled = !(matched && !gameOver);
-        resignBtn.disabled = !(matched && !gameOver);
+        // ✅ enable/disable draw+resign only when YOU are a player, matched, and not over
+        drawBtn.disabled = !(matched && !gameOver && isPlayerRole());
+        resignBtn.disabled = !(matched && !gameOver && isPlayerRole());
 
         copyBtn.disabled = !currentRoom;
       }
@@ -465,6 +469,7 @@
       const game = new window.Chess();
 
       function setOrientation() {
+        // spectators default to white orientation
         board.setOrientation(myRole === "black" ? COLOR.black : COLOR.white);
       }
 
@@ -502,6 +507,7 @@
 
       function canMoveNow() {
         if (gameOver) return false;
+        if (!isPlayerRole()) return false;
         const turn = game.turn();
         if (myRole === "white") return turn === "w";
         if (myRole === "black") return turn === "b";
@@ -645,7 +651,11 @@
 
       socket.on("room:joined", ({ room, role, players }) => {
         currentRoom = room;
-        myRole = role === "w" ? "white" : "black";
+
+        if (role === "w") myRole = "white";
+        else if (role === "b") myRole = "black";
+        else myRole = "spectator"; // ✅ spectator support
+
         gameOver = false;
         outgoingDrawPending = false;
 
@@ -730,9 +740,14 @@
         if (payload.room && payload.room !== currentRoom) return;
         if (gameOver) return;
 
+        // spectators should still see the message, but not be prompted
+        if (!isPlayerRole()) {
+          sys("draw offer sent between players");
+          return;
+        }
+
         sys("draw offer received");
 
-        // Simple UX: confirm dialog. Replace with custom modal later.
         const accept = window.confirm("Opponent offered a draw. Accept?");
         socket.emit("draw:response", { room: currentRoom, accept });
 
@@ -743,14 +758,13 @@
         }
       });
 
-      // Response to our draw offer (if server forwards it)
       socket.on("draw:response", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
 
         const accept = !!payload.accept;
         outgoingDrawPending = false;
-        drawBtn.disabled = !(mode === "matched" && !gameOver);
+        drawBtn.disabled = !(mode === "matched" && !gameOver && isPlayerRole());
 
         if (accept) {
           endGameLocal("draw agreed");
@@ -759,7 +773,6 @@
         }
       });
 
-      // If server chooses to broadcast a final draw event instead
       socket.on("draw:accepted", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
@@ -772,15 +785,12 @@
         if (payload.room && payload.room !== currentRoom) return;
         outgoingDrawPending = false;
         sys("draw declined");
-        drawBtn.disabled = !(mode === "matched" && !gameOver);
+        drawBtn.disabled = !(mode === "matched" && !gameOver && isPlayerRole());
       });
 
-      // If server broadcasts resign info
       socket.on("game:resigned", (payload = {}) => {
         if (!currentRoom) return;
         if (payload.room && payload.room !== currentRoom) return;
-
-        // payload.by could be "white"/"black" or socket id
         const by = payload.by ? String(payload.by) : "a player";
         endGameLocal(`${by} resigned`);
       });
@@ -796,7 +806,7 @@
       board.enableMoveInput((event) => {
         if (!currentRoom) return false;
         if (mode !== "matched") return false;
-        if (!(myRole === "white" || myRole === "black")) return false;
+        if (!isPlayerRole()) return false; // ✅ spectators never move
         if (gameOver) return false;
 
         if (event.type === INPUT_EVENT_TYPE.moveInputStarted) return canMoveNow();
@@ -870,9 +880,10 @@
         sys("room link copied");
       };
 
-      // ✅ Draw button: offer draw
+      // ✅ Draw button: offer draw (players only; button already disabled for spectators)
       drawBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
+        if (!isPlayerRole()) return;
         if (outgoingDrawPending) return;
 
         outgoingDrawPending = true;
@@ -881,9 +892,10 @@
         socket.emit("draw:offer", { room: currentRoom });
       };
 
-      // ✅ Resign button: resign immediately
+      // ✅ Resign button: resign immediately (players only)
       resignBtn.onclick = () => {
         if (!currentRoom || mode !== "matched" || gameOver) return;
+        if (!isPlayerRole()) return;
 
         const ok = window.confirm("Resign this game?");
         if (!ok) return;
