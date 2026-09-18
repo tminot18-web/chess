@@ -168,6 +168,23 @@ function roomSnapshot(room) {
   };
 }
 
+// Determine whether the game has ended, and how. Returns null if still playing.
+function terminalState(game) {
+  if (!game.game_over()) return null;
+  if (game.in_checkmate()) {
+    const loser = game.turn(); // side to move is the one that's mated
+    return { over: true, reason: "checkmate", winner: loser === "w" ? "b" : "w" };
+  }
+  if (game.in_stalemate()) return { over: true, reason: "stalemate", winner: null };
+  if (game.in_threefold_repetition()) return { over: true, reason: "threefold", winner: null };
+  if (game.insufficient_material()) return { over: true, reason: "insufficient", winner: null };
+  return { over: true, reason: "draw", winner: null }; // 50-move / other
+}
+
+function sideName(c) {
+  return c === "w" ? "White" : "Black";
+}
+
 function ensureRoomStruct(code) {
   let info = rooms.get(code);
   if (!info) {
@@ -309,6 +326,11 @@ io.on("connection", (socket) => {
     const info = rooms.get(code);
     if (!info) return;
 
+    if (info.result) {
+      socket.emit("move:rejected", { reason: "game_over", ...roomSnapshot(code) });
+      return;
+    }
+
     const role = roleForSocket(code, socket.id); // "w" | "b" | null
     if (!role) {
       socket.emit("move:rejected", { reason: "not_a_player", ...roomSnapshot(code) });
@@ -334,6 +356,10 @@ io.on("connection", (socket) => {
     }
 
     info.moveNumber += 1;
+    info.drawOfferBy = null; // a move cancels any pending draw offer
+
+    const term = terminalState(info.game);
+    if (term) info.result = term;
 
     const payload = {
       room: code,
@@ -341,9 +367,20 @@ io.on("connection", (socket) => {
       pgn: info.game.pgn(),
       moveNumber: info.moveNumber,
       move: result,
+      gameOver: term,
     };
 
     io.to(code).emit("move:accepted", payload);
+
+    if (term) {
+      io.to(code).emit("game:over", { room: code, ...term });
+      sys(
+        code,
+        term.reason === "checkmate"
+          ? `checkmate — ${sideName(term.winner)} wins`
+          : `game drawn (${term.reason})`
+      );
+    }
   });
 
   socket.on("chat:send", ({ text }) => {
@@ -360,6 +397,75 @@ io.on("connection", (socket) => {
       text: String(text || "").slice(0, 500),
     };
     broadcastChat(room, msg);
+  });
+
+  socket.on("resign", () => {
+    const room = getRoomForSocket(socket);
+    if (!room) return;
+    const info = rooms.get(room);
+    if (!info || info.result) return;
+    const role = roleForSocket(room, socket.id);
+    if (role !== "w" && role !== "b") return;
+    if (!info.players.w || !info.players.b) return; // need a full game
+    const winner = role === "w" ? "b" : "w";
+    info.result = { over: true, reason: "resign", winner };
+    info.drawOfferBy = null;
+    io.to(room).emit("game:over", { room, ...info.result });
+    sys(room, `${sideName(role)} resigned — ${sideName(winner)} wins`);
+  });
+
+  socket.on("draw:offer", () => {
+    const room = getRoomForSocket(socket);
+    if (!room) return;
+    const info = rooms.get(room);
+    if (!info || info.result) return;
+    const role = roleForSocket(room, socket.id);
+    if (role !== "w" && role !== "b") return;
+    if (!info.players.w || !info.players.b) return;
+    info.drawOfferBy = role;
+    socket.to(room).emit("draw:offered", { from: role });
+    sys(room, `${sideName(role)} offers a draw`);
+  });
+
+  socket.on("draw:accept", () => {
+    const room = getRoomForSocket(socket);
+    if (!room) return;
+    const info = rooms.get(room);
+    if (!info || info.result || !info.drawOfferBy) return;
+    const role = roleForSocket(room, socket.id);
+    if (role !== "w" && role !== "b") return;
+    if (role === info.drawOfferBy) return; // can't accept your own offer
+    info.result = { over: true, reason: "agreement", winner: null };
+    info.drawOfferBy = null;
+    io.to(room).emit("game:over", { room, ...info.result });
+    sys(room, "draw by agreement");
+  });
+
+  socket.on("draw:decline", () => {
+    const room = getRoomForSocket(socket);
+    if (!room) return;
+    const info = rooms.get(room);
+    if (!info || !info.drawOfferBy) return;
+    info.drawOfferBy = null;
+    io.to(room).emit("draw:declined", {});
+    sys(room, "draw declined");
+  });
+
+  socket.on("rematch", () => {
+    const room = getRoomForSocket(socket);
+    if (!room) return;
+    const info = rooms.get(room);
+    if (!info) return;
+    const role = roleForSocket(room, socket.id);
+    if (role !== "w" && role !== "b") return;
+    if (!info.players.w || !info.players.b) return;
+    info.game = new Chess();
+    info.moveNumber = 0;
+    info.result = null;
+    info.drawOfferBy = null;
+    io.to(room).emit("game:reset", { room });
+    io.to(room).emit("state:sync", roomSnapshot(room));
+    sys(room, "rematch — new game");
   });
 
   socket.on("disconnect", () => {

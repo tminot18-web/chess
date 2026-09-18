@@ -300,8 +300,18 @@
           </div>
         </div>
 
-        <div class="boardStage">
+        <div class="boardStage" style="position:relative">
           <div id="board"></div>
+          <div id="gameOverOverlay" style="position:absolute;inset:14px;display:none;align-items:center;justify-content:center;background:rgba(11,15,20,0.72);border-radius:14px;z-index:5">
+            <div style="text-align:center;padding:22px 26px;border-radius:16px;background:rgba(20,24,32,0.96);border:1px solid var(--border);box-shadow:var(--shadow)">
+              <div id="goTitle" style="font-size:22px;font-weight:800;margin-bottom:6px">Checkmate</div>
+              <div id="goSub" style="color:var(--muted);font-size:13px;margin-bottom:16px">White wins</div>
+              <div style="display:flex;gap:10px;justify-content:center">
+                <button id="rematchBtn" class="primary">Rematch</button>
+                <button id="closeOverlayBtn" class="neutral">View board</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -337,6 +347,12 @@
 
             <div class="modeLine">
               You can only move when it’s your turn.
+            </div>
+
+            <div id="drawOfferBar" class="row" style="display:none;margin-top:10px">
+              <span style="color:var(--muted);font-size:12px">Opponent offers a draw.</span>
+              <button id="drawAcceptBtn" class="primary">Accept</button>
+              <button id="drawDeclineBtn" class="neutral">Decline</button>
             </div>
 
             <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
@@ -397,6 +413,15 @@
 
       const chatInput = document.getElementById("chatInput");
       const sendBtn = document.getElementById("sendBtn");
+
+      const gameOverOverlay = document.getElementById("gameOverOverlay");
+      const goTitle = document.getElementById("goTitle");
+      const goSub = document.getElementById("goSub");
+      const rematchBtn = document.getElementById("rematchBtn");
+      const closeOverlayBtn = document.getElementById("closeOverlayBtn");
+      const drawOfferBar = document.getElementById("drawOfferBar");
+      const drawAcceptBtn = document.getElementById("drawAcceptBtn");
+      const drawDeclineBtn = document.getElementById("drawDeclineBtn");
 
       // ---------- Feed helpers ----------
       function addMsg(kind, from, text) {
@@ -475,6 +500,8 @@
         u.searchParams.delete("room");
         history.replaceState({}, "", u);
 
+        hideGameOver();
+        hideDrawOffer();
         updateTopPills(0);
         setMode("idle");
       }
@@ -484,6 +511,43 @@
         gameOver = true;
         sys(reason);
         setMode(mode);
+      }
+
+      // ---------- Game-over overlay + draw offer UI ----------
+      function resultText(reason, winner) {
+        if (reason === "checkmate") return { title: "Checkmate", sub: (winner === "w" ? "White" : "Black") + " wins" };
+        if (reason === "resign") return { title: "Resignation", sub: (winner === "w" ? "White" : "Black") + " wins" };
+        if (reason === "agreement") return { title: "Draw", sub: "By agreement" };
+        if (reason === "stalemate") return { title: "Draw", sub: "Stalemate" };
+        if (reason === "threefold") return { title: "Draw", sub: "Threefold repetition" };
+        if (reason === "insufficient") return { title: "Draw", sub: "Insufficient material" };
+        return { title: "Draw", sub: reason || "" };
+      }
+
+      function showGameOver(reason, winner) {
+        gameOver = true;
+        const you = myRole === "white" ? "w" : myRole === "black" ? "b" : null;
+        const t = resultText(reason, winner);
+        let sub = t.sub;
+        if (winner && you) sub += winner === you ? " — you win" : " — you lose";
+        else if (!winner && you) sub += " — ½–½";
+        goTitle.textContent = t.title;
+        goSub.textContent = sub;
+        gameOverOverlay.style.display = "flex";
+        hideDrawOffer();
+        setMode(mode);
+      }
+
+      function hideGameOver() {
+        gameOverOverlay.style.display = "none";
+      }
+
+      function showDrawOffer() {
+        if (drawOfferBar) drawOfferBar.style.display = "flex";
+      }
+
+      function hideDrawOffer() {
+        if (drawOfferBar) drawOfferBar.style.display = "none";
       }
 
       // ---------- Move sound ----------
@@ -578,6 +642,8 @@
         board.setPosition(game.fen());
         setEvalFromCp(0);
         clearLastMoveMarkers();
+        hideGameOver();
+        hideDrawOffer();
         requestEval(game.fen());
         setMode(mode);
       }
@@ -726,8 +792,6 @@
         const u = new URL(location.href);
         u.searchParams.set("room", currentRoom);
         history.replaceState({}, "", u);
-
-        sys(`match found: ${room} (${myRole})`);
       });
 
       socket.on("room:created", ({ room }) => {
@@ -745,8 +809,6 @@
         const u = new URL(location.href);
         u.searchParams.set("room", currentRoom);
         history.replaceState({}, "", u);
-
-        sys(`room created: ${room}`);
       });
 
       socket.on("room:joined", ({ room, role, players }) => {
@@ -764,8 +826,6 @@
         const u = new URL(location.href);
         u.searchParams.set("room", currentRoom);
         history.replaceState({}, "", u);
-
-        sys(`joined: ${room} (${myRole || "spectator"})`);
       });
 
       socket.on("room:update", ({ room, players }) => {
@@ -774,6 +834,32 @@
 
       socket.on("room:error", ({ error }) => sys("room error: " + error));
       socket.on("opponent:left", () => sys("opponent left"));
+
+      socket.on("game:over", ({ reason, winner }) => {
+        showGameOver(reason, winner);
+      });
+
+      socket.on("game:reset", () => {
+        gameOver = false;
+        outgoingDrawPending = false;
+        moveNumber = 0;
+        setEvalFromCp(0);
+        clearLastMoveMarkers();
+        hideGameOver();
+        hideDrawOffer();
+        setMode(mode);
+      });
+
+      socket.on("draw:offered", () => {
+        if (gameOver) return;
+        showDrawOffer();
+        sys("opponent offers a draw");
+      });
+
+      socket.on("draw:declined", () => {
+        outgoingDrawPending = false;
+        sys("draw declined");
+      });
 
       socket.on("state:sync", (s) => {
         try {
@@ -804,6 +890,7 @@
         if (move && move.from && move.to) {
           playMoveSound();
           showLastMove(move.from, move.to);
+          if (move.san) sys((move.color === "w" ? "White" : "Black") + " played " + move.san);
         }
 
         game.load(fen);
@@ -920,6 +1007,37 @@
         history.replaceState({}, "", u);
         await navigator.clipboard.writeText(u.toString());
         sys("room link copied");
+      };
+
+      resignBtn.onclick = () => {
+        if (gameOver || !(myRole === "white" || myRole === "black")) return;
+        socket.emit("resign");
+        sys("you resigned");
+      };
+
+      drawBtn.onclick = () => {
+        if (gameOver || !(myRole === "white" || myRole === "black")) return;
+        outgoingDrawPending = true;
+        socket.emit("draw:offer");
+        sys("draw offered");
+      };
+
+      drawAcceptBtn.onclick = () => {
+        socket.emit("draw:accept");
+        hideDrawOffer();
+      };
+
+      drawDeclineBtn.onclick = () => {
+        socket.emit("draw:decline");
+        hideDrawOffer();
+      };
+
+      rematchBtn.onclick = () => {
+        socket.emit("rematch");
+      };
+
+      closeOverlayBtn.onclick = () => {
+        hideGameOver();
       };
 
       function sendChat() {
